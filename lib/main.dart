@@ -222,6 +222,7 @@ class TimeTrackerHome extends StatefulWidget {
 }
 
 class _TimeTrackerHomeState extends State<TimeTrackerHome> {
+  bool _hasShownStartupReminder = false;
   List<EntryWithId> _entries = [];
   EntryWithId? _activeEntry;
   bool _isLoading = true;
@@ -439,6 +440,16 @@ Future<void> _addManualEntry() async {
       }
       _isLoading = false;
     });
+
+  
+ 
+
+  if (!_hasShownStartupReminder) {
+    _hasShownStartupReminder = true;
+    if (_activeEntry == null) {
+      _showStartTrackingReminder();
+    }
+  }
   }
 
   Future<void> _checkIn(bool isWorkSession) async {
@@ -794,6 +805,20 @@ Future<void> _addManualEntry() async {
     );
   }
 
+void _showStartTrackingReminder() {
+  final notification = LocalNotification(
+    title: 'Start Time Tracking',
+    body: "You're logged in — don't forget to start a work session.",
+    silent: false,
+  );
+
+  notification.onClick = () {
+    windowManager.show();
+    windowManager.focus();
+  };
+
+  notification.show();
+}
   @override
   Widget build(BuildContext context) {
     final completedEntries = _entries.where((e) => e.entry.checkOut != null).toList();
