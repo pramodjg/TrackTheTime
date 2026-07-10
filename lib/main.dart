@@ -40,12 +40,13 @@ void main() async {
 
   // 3. Configure Native Window Manager Engine
   await windowManager.ensureInitialized();
-  WindowOptions windowOptions = const WindowOptions(
-    title: "Daily Time Tracker",
-    size: Size(450, 650),
-    minimumSize: Size(300, 400),
+   WindowOptions windowOptions = WindowOptions(
+    size: Size(1024, 600),
     center: true,
-    skipTaskbar: true, // Hides the app from the primary taskbar row
+    alwaysOnTop: true,   
+    backgroundColor: Colors.transparent,   
+    titleBarStyle: TitleBarStyle.normal,
+    skipTaskbar: true,
   );
 
   // Ready the window, but force it to stay hidden initially
@@ -269,6 +270,134 @@ Future<void> _saveTargetHours(double hours) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setDouble('target_hours', hours);
   setState(() => _targetHours = hours);
+}
+Future<void> _showMonthlyReport() async {
+  DateTime selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+
+  await showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          return FutureBuilder<Map<String, int>>(
+            future: TimeDb.getMonthlyWorkSeconds(selectedMonth.year, selectedMonth.month),
+            builder: (context, snapshot) {
+              final dailyTotals = snapshot.data ?? {};
+              final totalSeconds = dailyTotals.values.fold<int>(0, (a, b) => a + b);
+              final daysLogged = dailyTotals.length;
+              final targetSecondsPerDay = (_targetHours * 3600).round();
+              final daysMetTarget = dailyTotals.values
+                  .where((s) => s >= targetSecondsPerDay)
+                  .length;
+
+              return AlertDialog(
+                title: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      onPressed: () {
+                        setDialogState(() {
+                          selectedMonth = DateTime(selectedMonth.year, selectedMonth.month - 1);
+                        });
+                      },
+                    ),
+                    Text(DateFormat('MMMM yyyy').format(selectedMonth)),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      onPressed: selectedMonth.year == DateTime.now().year &&
+                              selectedMonth.month == DateTime.now().month
+                          ? null
+                          : () {
+                              setDialogState(() {
+                                selectedMonth = DateTime(selectedMonth.year, selectedMonth.month + 1);
+                              });
+                            },
+                    ),
+                  ],
+                ),
+                content: SizedBox(
+                  width: 320,
+                  child: snapshot.connectionState == ConnectionState.waiting
+                      ? const SizedBox(
+                          height: 120,
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      : Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _reportStat('Total hours', _formatHoursMinutes(totalSeconds)),
+                            _reportStat('Days logged', '$daysLogged'),
+                            _reportStat(
+                              'Avg per logged day',
+                              daysLogged == 0
+                                  ? '—'
+                                  : _formatHoursMinutes(totalSeconds ~/ daysLogged),
+                            ),
+                            _reportStat('Days met target', '$daysMetTarget / $daysLogged'),
+                            const Divider(height: 24),
+                            SizedBox(
+                              height: 220,
+                              child: dailyTotals.isEmpty
+                                  ? const Center(
+                                      child: Text('No entries this month',
+                                          style: TextStyle(color: Colors.grey)),
+                                    )
+                                  : ListView(
+                                      children: dailyTotals.entries.map((e) {
+                                        final met = e.value >= targetSecondsPerDay;
+                                        return ListTile(
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          leading: Icon(
+                                            met ? Icons.check_circle : Icons.remove_circle_outline,
+                                            color: met ? Colors.green : Colors.grey,
+                                            size: 20,
+                                          ),
+                                          title: Text(
+                                            DateFormat('EEE, MMM d').format(DateTime.parse(e.key)),
+                                          ),
+                                          trailing: Text(_formatHoursMinutes(e.value)),
+                                        );
+                                      }).toList(),
+                                    ),
+                            ),
+                          ],
+                        ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    },
+  );
+}
+
+Widget _reportStat(String label, String value) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: TextStyle(color: Colors.grey[700])),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+      ],
+    ),
+  );
+}
+
+String _formatHoursMinutes(int totalSeconds) {
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  return '${hours}h ${minutes}m';
 }
 
 Future<void> _showTargetSettingsDialog() async {
@@ -588,10 +717,7 @@ Future<void> _addManualEntry() async {
         _elapsedTime = DateTime.now().difference(_activeEntry!.entry.checkIn);
       }
       _isLoading = false;
-    });
-
-  
- 
+    }); 
 
   if (!_hasShownStartupReminder) {
     _hasShownStartupReminder = true;
@@ -981,6 +1107,11 @@ void _showStartTrackingReminder() {
     onPressed: _addManualEntry,
     tooltip: 'Add manual entry',
   ),
+  IconButton(
+  icon: const Icon(Icons.calendar_month),
+  onPressed: _showMonthlyReport,
+  tooltip: 'Monthly report',
+),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadEntries,

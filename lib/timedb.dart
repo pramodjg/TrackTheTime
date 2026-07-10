@@ -156,4 +156,39 @@ class TimeDb {
     final db = await database;
     await db.delete('time_entries');
   }
+
+  /// Returns work seconds per day as {'2026-07-01': 28800, ...}, 
+/// only counting completed work sessions within the given range (inclusive).
+static Future<Map<String, int>> getDailyWorkSeconds({
+  required DateTime from,
+  required DateTime to,
+}) async {
+  final db = await database;
+  final result = await db.rawQuery('''
+    SELECT 
+      date(checkIn) as day,
+      SUM(
+        (julianday(checkOut) - julianday(checkIn)) * 86400
+      ) as totalSeconds
+    FROM time_entries
+    WHERE checkOut IS NOT NULL 
+      AND isWorkSession = 1
+      AND date(checkIn) >= date(?)
+      AND date(checkIn) <= date(?)
+    GROUP BY day
+    ORDER BY day
+  ''', [from.toIso8601String(), to.toIso8601String()]);
+
+  return {
+    for (final row in result)
+      row['day'] as String: (row['totalSeconds'] as num).round()
+  };
+}
+
+/// Convenience wrapper for a specific calendar month (1-12).
+static Future<Map<String, int>> getMonthlyWorkSeconds(int year, int month) {
+  final from = DateTime(year, month, 1);
+  final to = DateTime(year, month + 1, 0); // last day of month
+  return getDailyWorkSeconds(from: from, to: to);
+}
 }
