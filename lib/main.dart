@@ -8,13 +8,15 @@ import 'package:system_tray/system_tray.dart';
 import 'package:trackthetime/timedb.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:async';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:window_manager/window_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+/// Set by TimeTrackerHome when it mounts, so the tray menu (which has no
+/// widget context) can trigger the settings dialog inside the app.
+VoidCallback? onOpenSettingsRequested;
+double _targetHours = 8.0;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -98,6 +100,14 @@ Future<void> initSystemTray() async {
       label: 'Open Dashboard', 
       onClicked: (menuItem) => windowManager.show(),
     ),
+    MenuItemLabel(
+    label: 'Set Daily Target',
+    onClicked: (menuItem) async {
+      await windowManager.show();
+      await windowManager.focus();
+      onOpenSettingsRequested?.call();
+    },
+  ),
     MenuItemLabel(
       label: 'Minimize to Tray', 
       onClicked: (menuItem) => windowManager.hide(),
@@ -235,15 +245,154 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     super.initState();
     _loadEntries();
     _startTimer();
+     _loadTargetHours();
+  onOpenSettingsRequested = _showTargetSettingsDialog;
   }
 
   @override
   void dispose() {
-    _notesController.dispose();
-    _timer?.cancel();
-    super.dispose();
+   _notesController.dispose();
+  _timer?.cancel();
+  if (onOpenSettingsRequested == _showTargetSettingsDialog) {
+    onOpenSettingsRequested = null;
   }
+  super.dispose();
+  }
+Future<void> _loadTargetHours() async {
+  final prefs = await SharedPreferences.getInstance();
+  setState(() {
+    _targetHours = prefs.getDouble('target_hours') ?? 8.0;
+  });
+}
 
+Future<void> _saveTargetHours(double hours) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setDouble('target_hours', hours);
+  setState(() => _targetHours = hours);
+}
+
+Future<void> _showTargetSettingsDialog() async {
+  final controller = TextEditingController(
+    text: _targetHours == _targetHours.roundToDouble()
+        ? _targetHours.toStringAsFixed(0)
+        : _targetHours.toString(),
+  );
+  String? errorText;
+
+  await showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Daily Target Hours'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Target hours per day',
+                    border: OutlineInputBorder(),
+                    suffixText: 'hrs',
+                  ),
+                ),
+                if (errorText != null) ...[
+                  const SizedBox(height: 8),
+                  Text(errorText!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final value = double.tryParse(controller.text);
+                  if (value == null || value <= 0 || value > 24) {
+                    setDialogState(() {
+                      errorText = 'Enter a valid number between 0 and 24';
+                    });
+                    return;
+                  }
+                  await _saveTargetHours(value);
+                  if (context.mounted) Navigator.pop(context);
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  controller.dispose();
+}
+
+Widget _buildTargetProgress() {
+  final workTime = _calculateDailySummary()['work']!;
+  final target = Duration(minutes: (_targetHours * 60).round());
+  final diff = workTime - target;
+  final metTarget = diff >= Duration.zero;
+
+  return Card(
+    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    color: metTarget ? Colors.green[50] : Colors.blue[50],
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Daily Target', style: TextStyle(fontWeight: FontWeight.bold)),
+              GestureDetector(
+                onTap: _showTargetSettingsDialog,
+                child: Row(
+                  children: [
+                    Text('${_targetHours.toStringAsFixed(_targetHours == _targetHours.roundToDouble() ? 0 : 1)} hrs',
+                        style: TextStyle(color: Colors.grey[700])),
+                    const SizedBox(width: 4),
+                    Icon(Icons.edit, size: 14, color: Colors.grey[500]),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: target.inSeconds == 0
+                  ? 0
+                  : (workTime.inSeconds / target.inSeconds).clamp(0.0, 1.0),
+              backgroundColor: Colors.grey[300],
+              color: metTarget ? Colors.green : Colors.blue,
+              minHeight: 8,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            metTarget
+                ? '${_formatDuration(diff)} over target'
+                : '${_formatDuration(diff.abs())} remaining to target',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: metTarget ? Colors.green[800] : Colors.blue[800],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
   void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_activeEntry != null) {
@@ -873,6 +1022,7 @@ void _showStartTrackingReminder() {
               children: [
                 _buildActiveSession(),
                 _buildDailySummary(),
+                 _buildTargetProgress(),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Align(
