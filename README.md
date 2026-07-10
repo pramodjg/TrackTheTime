@@ -1,6 +1,6 @@
 # trackthetime
 
-A new Flutter project.
+Simple Windows Application To Track Productivity
 
 ## Getting Started
 
