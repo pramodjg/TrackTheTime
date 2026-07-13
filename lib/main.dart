@@ -469,6 +469,14 @@ Widget _buildTargetProgress() {
   final target = Duration(minutes: (_targetHours * 60).round());
   final diff = workTime - target;
   final metTarget = diff >= Duration.zero;
+  final remaining = metTarget ? Duration.zero : target - workTime;
+
+  // Only project a completion time while a work session is actively
+  // running — a paused/break state shouldn't imply progress is still
+  // being made toward the target.
+  final isActivelyWorking = _activeEntry != null && _activeEntry!.entry.isWorkSession;
+  final expectedCompletion =
+      (!metTarget && isActivelyWorking) ? DateTime.now().add(remaining) : null;
 
   return Card(
     margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -517,6 +525,23 @@ Widget _buildTargetProgress() {
               color: metTarget ? Colors.green[800] : Colors.blue[800],
             ),
           ),
+          if (expectedCompletion != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Est. target completion: ${_formatTime(expectedCompletion)}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ] else if (!metTarget) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Start a work session to see the estimated completion time',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[500],
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+          ],
         ],
       ),
     ),
@@ -890,11 +915,30 @@ Future<void> _addManualEntry() async {
       }
     }
 
+    // Fold in the live elapsed time of the active session, if it started
+    // today, so the target progress bar and completion estimate update in
+    // real time instead of only jumping when the user checks out.
+    final active = _activeEntry?.entry;
+    if (active != null &&
+        active.checkIn.year == today.year &&
+        active.checkIn.month == today.month &&
+        active.checkIn.day == today.day) {
+      if (active.isWorkSession) {
+        workTime += _elapsedTime;
+      } else {
+        breakTime += _elapsedTime;
+      }
+    }
+
     return {'work': workTime, 'break': breakTime};
   }
 
   String _formatDateTime(DateTime dt) {
     return DateFormat('MMM dd, yyyy • HH:mm').format(dt);
+  }
+
+  String _formatTime(DateTime dt) {
+    return DateFormat('h:mm a').format(dt);
   }
 
   Widget _buildDailySummary() {
@@ -905,6 +949,17 @@ Future<void> _addManualEntry() async {
     if (workTime == Duration.zero && breakTime == Duration.zero) {
       return const SizedBox.shrink();
     }
+
+    final target = Duration(minutes: (_targetHours * 60).round());
+    final metTarget = workTime >= target;
+    final remaining = metTarget ? Duration.zero : target - workTime;
+
+    // Only project a completion time while a work session is actively
+    // running — a paused/break state shouldn't imply progress is still
+    // being made toward the target.
+    final isActivelyWorking = _activeEntry != null && _activeEntry!.entry.isWorkSession;
+    final expectedCompletion =
+        (!metTarget && isActivelyWorking) ? DateTime.now().add(remaining) : null;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -954,6 +1009,55 @@ Future<void> _addManualEntry() async {
                 ),
               ],
             ),
+            if (metTarget) ...[
+              const Divider(height: 24),
+              Row(
+                children: [
+                  Icon(Icons.check_circle, size: 16, color: Colors.green[700]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Daily target reached',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                ],
+              ),
+            ] else if (expectedCompletion != null) ...[
+              const Divider(height: 24),
+              Row(
+                children: [
+                  Icon(Icons.schedule, size: 16, color: Colors.grey[700]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Target expected at ${_formatTime(expectedCompletion)}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              const Divider(height: 24),
+              Row(
+                children: [
+                  Icon(Icons.schedule, size: 16, color: Colors.grey[400]),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Start a work session to estimate target time',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[500],
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),
