@@ -30,19 +30,19 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
-  launch_at_startup: ^0.5.1
+  path: ^1.9.0
+  sqflite: ^2.3.3                       # NEW — mobile DB, also backs desktop via databaseFactory
+  sqflite_common_ffi: ^2.3.3            # desktop-only, used only when Platform is Windows/Linux/macOS
+  shared_preferences: ^2.3.2
+  intl: ^0.19.0
+  flutter_local_notifications: ^17.2.3  # NEW — Android notifications
+  # Desktop-only plugins — safe to keep listed even for Android builds,
+  # since we never call their platform channels outside _isDesktop guards
+  window_manager: ^0.4.3
   system_tray: ^2.0.3
-  window_manager: ^0.5.2
+  launch_at_startup: ^0.3.1
   local_notifier: ^0.1.6
-  package_info_plus: ^8.0.0  
-  sqflite_common_ffi: ^2.3.3+1
-  path: ^1.8.3  
-  intl: ^0.18.1
-  shared_preferences: ^2.5.5
+  package_info_plus: ^8.0.2
  
 
 dev_dependencies:

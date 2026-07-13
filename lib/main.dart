@@ -1,68 +1,150 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
+import 'package:trackthetime/timedb.dart';
+import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite/sqflite.dart' show databaseFactory;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+
+// Desktop-only plugins
 import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:local_notifier/local_notifier.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:system_tray/system_tray.dart';
-import 'package:trackthetime/timedb.dart';
 import 'package:window_manager/window_manager.dart';
-import 'dart:async';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart';
-
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Set by TimeTrackerHome when it mounts, so the tray menu (which has no
 /// widget context) can trigger the settings dialog inside the app.
+/// Only ever populated/invoked on desktop, since there's no tray on mobile.
 VoidCallback? onOpenSettingsRequested;
 double _targetHours = 8.0;
+Set<int> _workingWeekdays = {1, 2, 3, 4, 5};
+
+/// True on Windows/Linux/macOS, false on Android/iOS/web.
+bool get _isDesktop =>
+    !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+
+final FlutterLocalNotificationsPlugin _mobileNotifications =
+    FlutterLocalNotificationsPlugin();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize sqflite for desktop
-  sqfliteFfiInit();
-  databaseFactory = databaseFactoryFfi;
-  // 1. Setup App Utilities and Startup Registration
-  PackageInfo packageInfo = await PackageInfo.fromPlatform();
-  LaunchAtStartup.instance.setup(
-    appName: packageInfo.appName,
-    appPath: Platform.resolvedExecutable,
-  );
-  await LaunchAtStartup.instance.enable();
+  // --- Database setup ---
+  // sqflite works natively on Android/iOS. On desktop we swap in the FFI
+  // implementation so the same `sqflite` calls in timedb.dart work there too.
+  if (_isDesktop) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
 
-  // 2. Initialize Native Toast Notification Engine safely via Dart
-  await localNotifier.setup(
-    appName: packageInfo.appName,
-    // Setting a unique appId here forces the package to handle the Windows AUMID registration automatically
-    shortcutPolicy: ShortcutPolicy.requireCreate,
-  );
+  if (_isDesktop) {
+    // 1. Setup App Utilities and Startup Registration
+    PackageInfo packageInfo = await PackageInfo.fromPlatform();
+    LaunchAtStartup.instance.setup(
+      appName: packageInfo.appName,
+      appPath: Platform.resolvedExecutable,
+    );
+    await LaunchAtStartup.instance.enable();
 
-  // 3. Configure Native Window Manager Engine
-  await windowManager.ensureInitialized();
-   WindowOptions windowOptions = WindowOptions(
-    size: Size(1024, 600),
-    center: true,
-    alwaysOnTop: true,   
-    backgroundColor: Colors.transparent,   
-    titleBarStyle: TitleBarStyle.normal,
-    skipTaskbar: true,
-  );
+    // 2. Initialize Native Toast Notification Engine safely via Dart
+    await localNotifier.setup(
+      appName: packageInfo.appName,
+      shortcutPolicy: ShortcutPolicy.requireCreate,
+    );
 
-  // Ready the window, but force it to stay hidden initially
-  await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.hide();
-  });
+    // 3. Configure Native Window Manager Engine
+    await windowManager.ensureInitialized();
+    WindowOptions windowOptions = WindowOptions(
+      size: Size(1024, 600),
+      center: true,
+      alwaysOnTop: true,
+      backgroundColor: Colors.transparent,
+      titleBarStyle: TitleBarStyle.normal,
+      skipTaskbar: true,
+    );
 
-  // 4. Attach System Tray and Trigger Splash Message
-try {
-  await initSystemTray();
-} catch (e, st) {
-  debugPrint('Tray init failed: $e\n$st');
-}
-showSplashNotification();
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.hide();
+    });
+
+    // 4. Attach System Tray and Trigger Splash Message
+    try {
+      await initSystemTray();
+    } catch (e, st) {
+      debugPrint('Tray init failed: $e\n$st');
+    }
+  } else {
+    // Mobile: init flutter_local_notifications + request runtime permission
+    await _initMobileNotifications();
+  }
+
+  showSplashNotification();
 
   runApp(const MyApp());
+}
+
+Future<void> _initMobileNotifications() async {
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidInit);
+
+  await _mobileNotifications.initialize(
+    initSettings,
+    onDidReceiveNotificationResponse: (NotificationResponse response) {
+      // App is already foregrounded by the OS when a notification is
+      // tapped, so there's nothing extra to do here on Android.
+    },
+  );
+
+  await _mobileNotifications
+      .resolvePlatformSpecificImplementation
+          <AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission();
+}
+
+/// Unified notification helper — routes to local_notifier on desktop and
+/// flutter_local_notifications on mobile.
+void _showAppNotification({
+  required String title,
+  required String body,
+  VoidCallback? onTap,
+}) {
+  if (_isDesktop) {
+    LocalNotification notification = LocalNotification(
+      title: title,
+      body: body,
+      silent: false,
+    );
+    notification.onClick = () => onTap?.call();
+    notification.show();
+  } else {
+    const androidDetails = AndroidNotificationDetails(
+      'trackthetime_channel',
+      'Time Tracker',
+      channelDescription: 'Time tracking reminders and status updates',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    const details = NotificationDetails(android: androidDetails);
+    _mobileNotifications.show(
+      DateTime.now().millisecondsSinceEpoch.remainder(100000),
+      title,
+      body,
+      details,
+    );
+  }
+}
+
+Future<void> _showAndFocusWindow() async {
+  if (_isDesktop) {
+    await windowManager.show();
+    await windowManager.focus();
+  }
+  // On mobile there's nothing to do — the app is already in the foreground.
 }
 
 String getTrayIconPath(String fileName) {
@@ -74,9 +156,11 @@ String getTrayIconPath(String fileName) {
     fileName,
   );
 }
-/// Sets up the persistent icon tray and its respective context menus
+
+/// Sets up the persistent icon tray and its respective context menus.
+/// Desktop-only — never called on Android.
 Future<void> initSystemTray() async {
-   final SystemTray systemTray = SystemTray();
+  final SystemTray systemTray = SystemTray();
   final Menu menu = Menu();
 
   final iconFile = Platform.isWindows ? 'app_icon.ico' : 'app_icon.png';
@@ -95,61 +179,53 @@ Future<void> initSystemTray() async {
     title: "Tray Utility",
     iconPath: iconPath,
   );
-  // Construct context dropdown items
+
   await menu.buildFrom([
     MenuItemLabel(
-      label: 'Open Dashboard', 
+      label: 'Open Dashboard',
       onClicked: (menuItem) => windowManager.show(),
     ),
     MenuItemLabel(
-    label: 'Set Daily Target',
-    onClicked: (menuItem) async {
-      await windowManager.show();
-      await windowManager.focus();
-      onOpenSettingsRequested?.call();
-    },
-  ),
+      label: 'Set Daily Target',
+      onClicked: (menuItem) async {
+        await windowManager.show();
+        await windowManager.focus();
+        onOpenSettingsRequested?.call();
+      },
+    ),
     MenuItemLabel(
-      label: 'Minimize to Tray', 
+      label: 'Minimize to Tray',
       onClicked: (menuItem) => windowManager.hide(),
     ),
     MenuSeparator(),
     MenuItemLabel(
-      label: 'Close Completely', 
+      label: 'Close Completely',
       onClicked: (menuItem) => windowManager.destroy(),
     ),
   ]);
 
   await systemTray.setContextMenu(menu);
 
-  // Map left click behavior to toggle application display state
- systemTray.registerSystemTrayEventHandler((eventName) {
-  debugPrint("Tray event: $eventName"); // helpful to confirm events are firing at all
-  if (eventName == kSystemTrayEventClick) {
-    windowManager.isVisible().then((visible) {
-      visible ? windowManager.hide() : windowManager.show();
-    });
-  } else if (eventName == kSystemTrayEventRightClick) {
-    systemTray.popUpContextMenu();
-  }
-});
+  systemTray.registerSystemTrayEventHandler((eventName) {
+    debugPrint("Tray event: $eventName");
+    if (eventName == kSystemTrayEventClick) {
+      windowManager.isVisible().then((visible) {
+        visible ? windowManager.hide() : windowManager.show();
+      });
+    } else if (eventName == kSystemTrayEventRightClick) {
+      systemTray.popUpContextMenu();
+    }
+  });
 }
 
-/// Pushes a native action toast alert down on the desktop surface
 void showSplashNotification() {
-  LocalNotification notification = LocalNotification(
-    title: "App Initialized Successfully",
-    body: "The utility is running smoothly inside your system tray.",
-    silent: false, // Triggers standard OS alert audio chime
+  _showAppNotification(
+    title: 'App Initialized Successfully',
+    body: _isDesktop
+        ? 'The utility is running smoothly inside your system tray.'
+        : 'Time Tracker is ready to use.',
+    onTap: _showAndFocusWindow,
   );
-
-  // Maximize UI dashboard focus if user interacts with the alert banner
-  notification.onClick = () {
-    windowManager.show();
-    windowManager.focus();
-  };
-
-  notification.show();
 }
 
 class MyApp extends StatelessWidget {
@@ -174,50 +250,44 @@ class DashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // appBar: AppBar(
-      //   title: const Text('WELCOME'),
-      //   centerTitle: false,
-      //   leading: IconButton(
-      //     icon: const Icon(Icons.arrow_back),
-      //     onPressed: () => windowManager.hide(),
-      //   ),
-      // ),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.start,
           children: [
-            Expanded(child: 
-                  TimeTrackerHome()),
-            Column(
-               mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-          
-                const Icon(Icons.dns_rounded, size: 12, color: Colors.deepPurple),
-            const SizedBox(height: 16),
-            const Text(
-              'Background Service Status: Active',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                'Closing this interface page keeps the operation active inside your taskbar utility ecosystem.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+            const Expanded(child: TimeTrackerHome()),
+            // Tray/minimize messaging only makes sense on desktop — on
+            // Android the app just runs normally in the foreground.
+            if (_isDesktop)
+              Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  const Icon(Icons.dns_rounded,
+                      size: 12, color: Colors.deepPurple),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Background Service Status: Active',
+                    style:
+                        TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      'Closing this interface page keeps the operation active inside your taskbar utility ecosystem.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.hide_source),
+                    label: const Text(''),
+                    onPressed: () async {
+                      await windowManager.hide();
+                    },
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.hide_source),
-              label: const Text(''),
-              onPressed: () async {
-                await windowManager.hide();
-              },
-            ),
-            ],
-            )
-          
           ],
         ),
       ),
@@ -246,307 +316,452 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     super.initState();
     _loadEntries();
     _startTimer();
-     _loadTargetHours();
-  onOpenSettingsRequested = _showTargetSettingsDialog;
+    _loadTargetHours();
+    onOpenSettingsRequested = _showTargetSettingsDialog;
   }
 
   @override
   void dispose() {
-   _notesController.dispose();
-  _timer?.cancel();
-  if (onOpenSettingsRequested == _showTargetSettingsDialog) {
-    onOpenSettingsRequested = null;
+    _notesController.dispose();
+    _timer?.cancel();
+    if (onOpenSettingsRequested == _showTargetSettingsDialog) {
+      onOpenSettingsRequested = null;
+    }
+    super.dispose();
   }
-  super.dispose();
+
+  Future<void> _loadTargetHours() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedDays = prefs.getStringList('working_weekdays');
+    setState(() {
+      _targetHours = prefs.getDouble('target_hours') ?? 8.0;
+      if (storedDays != null && storedDays.isNotEmpty) {
+        _workingWeekdays = storedDays.map(int.parse).toSet();
+      }
+    });
   }
-Future<void> _loadTargetHours() async {
-  final prefs = await SharedPreferences.getInstance();
-  setState(() {
-    _targetHours = prefs.getDouble('target_hours') ?? 8.0;
-  });
-}
 
-Future<void> _saveTargetHours(double hours) async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setDouble('target_hours', hours);
-  setState(() => _targetHours = hours);
-}
-Future<void> _showMonthlyReport() async {
-  DateTime selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  Future<void> _saveTargetHours(double hours) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('target_hours', hours);
+    setState(() => _targetHours = hours);
+  }
 
-  await showDialog(
-    context: context,
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setDialogState) {
-          return FutureBuilder<Map<String, int>>(
-            future: TimeDb.getMonthlyWorkSeconds(selectedMonth.year, selectedMonth.month),
-            builder: (context, snapshot) {
-              final dailyTotals = snapshot.data ?? {};
-              final totalSeconds = dailyTotals.values.fold<int>(0, (a, b) => a + b);
-              final daysLogged = dailyTotals.length;
-              final targetSecondsPerDay = (_targetHours * 3600).round();
-              final daysMetTarget = dailyTotals.values
-                  .where((s) => s >= targetSecondsPerDay)
-                  .length;
+  Future<void> _saveWorkingWeekdays(Set<int> days) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'working_weekdays',
+      days.map((d) => d.toString()).toList(),
+    );
+    setState(() => _workingWeekdays = days);
+  }
 
-              return AlertDialog(
-                title: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left),
-                      onPressed: () {
-                        setDialogState(() {
-                          selectedMonth = DateTime(selectedMonth.year, selectedMonth.month - 1);
-                        });
-                      },
-                    ),
-                    Text(DateFormat('MMMM yyyy').format(selectedMonth)),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right),
-                      onPressed: selectedMonth.year == DateTime.now().year &&
-                              selectedMonth.month == DateTime.now().month
-                          ? null
-                          : () {
-                              setDialogState(() {
-                                selectedMonth = DateTime(selectedMonth.year, selectedMonth.month + 1);
-                              });
-                            },
+  int _workingDaysInMonth(int year, int month) {
+    final daysInMonth = DateTime(year, month + 1, 0).day;
+    int count = 0;
+    for (int day = 1; day <= daysInMonth; day++) {
+      final weekday = DateTime(year, month, day).weekday;
+      if (_workingWeekdays.contains(weekday)) count++;
+    }
+    return count;
+  }
+
+  Future<void> _showMonthlyReport() async {
+    DateTime selectedMonth =
+        DateTime(DateTime.now().year, DateTime.now().month);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return FutureBuilder<Map<String, int>>(
+              future: TimeDb.getMonthlyWorkSeconds(
+                  selectedMonth.year, selectedMonth.month),
+              builder: (context, snapshot) {
+                final dailyTotals = snapshot.data ?? {};
+                final totalSeconds =
+                    dailyTotals.values.fold<int>(0, (a, b) => a + b);
+                final daysLogged = dailyTotals.length;
+                final targetSecondsPerDay = (_targetHours * 3600).round();
+                final daysMetTarget = dailyTotals.values
+                    .where((s) => s >= targetSecondsPerDay)
+                    .length;
+
+                final workingDaysThisMonth = _workingDaysInMonth(
+                    selectedMonth.year, selectedMonth.month);
+                final monthlyTargetSeconds =
+                    workingDaysThisMonth * targetSecondsPerDay;
+                final monthlyProgress = monthlyTargetSeconds == 0
+                    ? 0.0
+                    : (totalSeconds / monthlyTargetSeconds).clamp(0.0, 1.0);
+                final monthlyMet = totalSeconds >= monthlyTargetSeconds;
+
+                return AlertDialog(
+                  title: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left),
+                        onPressed: () {
+                          setDialogState(() {
+                            selectedMonth = DateTime(
+                                selectedMonth.year, selectedMonth.month - 1);
+                          });
+                        },
+                      ),
+                      Text(DateFormat('MMMM yyyy').format(selectedMonth)),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        onPressed: selectedMonth.year == DateTime.now().year &&
+                                selectedMonth.month == DateTime.now().month
+                            ? null
+                            : () {
+                                setDialogState(() {
+                                  selectedMonth = DateTime(selectedMonth.year,
+                                      selectedMonth.month + 1);
+                                });
+                              },
+                      ),
+                    ],
+                  ),
+                  content: SizedBox(
+                    width: 320,
+                    child: snapshot.connectionState == ConnectionState.waiting
+                        ? const SizedBox(
+                            height: 120,
+                            child: Center(child: CircularProgressIndicator()),
+                          )
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _reportStat(
+                                  'Total hours', _formatHoursMinutes(totalSeconds)),
+                              _reportStat('Days logged', '$daysLogged'),
+                              _reportStat(
+                                'Avg per logged day',
+                                daysLogged == 0
+                                    ? '—'
+                                    : _formatHoursMinutes(
+                                        totalSeconds ~/ daysLogged),
+                              ),
+                              _reportStat('Days met target',
+                                  '$daysMetTarget / $daysLogged'),
+                              const Divider(height: 24),
+                              _reportStat(
+                                  'Working days this month', '$workingDaysThisMonth'),
+                              _reportStat(
+                                'Est. monthly target',
+                                _formatHoursMinutes(monthlyTargetSeconds),
+                              ),
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: monthlyProgress,
+                                  backgroundColor: Colors.grey[300],
+                                  color: monthlyMet
+                                      ? Colors.green
+                                      : Colors.deepPurple,
+                                  minHeight: 8,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                monthlyMet
+                                    ? '${_formatHoursMinutes(totalSeconds - monthlyTargetSeconds)} over monthly target'
+                                    : '${_formatHoursMinutes(monthlyTargetSeconds - totalSeconds)} remaining of monthly target',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: monthlyMet
+                                      ? Colors.green[800]
+                                      : Colors.deepPurple[700],
+                                ),
+                              ),
+                              const Divider(height: 24),
+                              SizedBox(
+                                height: 220,
+                                child: dailyTotals.isEmpty
+                                    ? const Center(
+                                        child: Text('No entries this month',
+                                            style:
+                                                TextStyle(color: Colors.grey)),
+                                      )
+                                    : ListView(
+                                        children:
+                                            dailyTotals.entries.map((e) {
+                                          final met =
+                                              e.value >= targetSecondsPerDay;
+                                          return ListTile(
+                                            dense: true,
+                                            contentPadding: EdgeInsets.zero,
+                                            leading: Icon(
+                                              met
+                                                  ? Icons.check_circle
+                                                  : Icons
+                                                      .remove_circle_outline,
+                                              color: met
+                                                  ? Colors.green
+                                                  : Colors.grey,
+                                              size: 20,
+                                            ),
+                                            title: Text(
+                                              DateFormat('EEE, MMM d').format(
+                                                  DateTime.parse(e.key)),
+                                            ),
+                                            trailing:
+                                                Text(_formatHoursMinutes(e.value)),
+                                          );
+                                        }).toList(),
+                                      ),
+                              ),
+                            ],
+                          ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Close'),
                     ),
                   ],
-                ),
-                content: SizedBox(
-                  width: 320,
-                  child: snapshot.connectionState == ConnectionState.waiting
-                      ? const SizedBox(
-                          height: 120,
-                          child: Center(child: CircularProgressIndicator()),
-                        )
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _reportStat('Total hours', _formatHoursMinutes(totalSeconds)),
-                            _reportStat('Days logged', '$daysLogged'),
-                            _reportStat(
-                              'Avg per logged day',
-                              daysLogged == 0
-                                  ? '—'
-                                  : _formatHoursMinutes(totalSeconds ~/ daysLogged),
-                            ),
-                            _reportStat('Days met target', '$daysMetTarget / $daysLogged'),
-                            const Divider(height: 24),
-                            SizedBox(
-                              height: 220,
-                              child: dailyTotals.isEmpty
-                                  ? const Center(
-                                      child: Text('No entries this month',
-                                          style: TextStyle(color: Colors.grey)),
-                                    )
-                                  : ListView(
-                                      children: dailyTotals.entries.map((e) {
-                                        final met = e.value >= targetSecondsPerDay;
-                                        return ListTile(
-                                          dense: true,
-                                          contentPadding: EdgeInsets.zero,
-                                          leading: Icon(
-                                            met ? Icons.check_circle : Icons.remove_circle_outline,
-                                            color: met ? Colors.green : Colors.grey,
-                                            size: 20,
-                                          ),
-                                          title: Text(
-                                            DateFormat('EEE, MMM d').format(DateTime.parse(e.key)),
-                                          ),
-                                          trailing: Text(_formatHoursMinutes(e.value)),
-                                        );
-                                      }).toList(),
-                                    ),
-                            ),
-                          ],
-                        ),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-      );
-    },
-  );
-}
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
 
-Widget _reportStat(String label, String value) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(vertical: 4),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: TextStyle(color: Colors.grey[700])),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
-      ],
-    ),
-  );
-}
-
-String _formatHoursMinutes(int totalSeconds) {
-  final hours = totalSeconds ~/ 3600;
-  final minutes = (totalSeconds % 3600) ~/ 60;
-  return '${hours}h ${minutes}m';
-}
-
-Future<void> _showTargetSettingsDialog() async {
-  final controller = TextEditingController(
-    text: _targetHours == _targetHours.roundToDouble()
-        ? _targetHours.toStringAsFixed(0)
-        : _targetHours.toString(),
-  );
-  String? errorText;
-
-  await showDialog(
-    context: context,
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('Daily Target Hours'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: controller,
-                  autofocus: true,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Target hours per day',
-                    border: OutlineInputBorder(),
-                    suffixText: 'hrs',
-                  ),
-                ),
-                if (errorText != null) ...[
-                  const SizedBox(height: 8),
-                  Text(errorText!, style: const TextStyle(color: Colors.red, fontSize: 13)),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  final value = double.tryParse(controller.text);
-                  if (value == null || value <= 0 || value > 24) {
-                    setDialogState(() {
-                      errorText = 'Enter a valid number between 0 and 24';
-                    });
-                    return;
-                  }
-                  await _saveTargetHours(value);
-                  if (context.mounted) Navigator.pop(context);
-                },
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
-
-  controller.dispose();
-}
-
-Widget _buildTargetProgress() {
-  final workTime = _calculateDailySummary()['work']!;
-  final target = Duration(minutes: (_targetHours * 60).round());
-  final diff = workTime - target;
-  final metTarget = diff >= Duration.zero;
-  final remaining = metTarget ? Duration.zero : target - workTime;
-
-  // Only project a completion time while a work session is actively
-  // running — a paused/break state shouldn't imply progress is still
-  // being made toward the target.
-  final isActivelyWorking = _activeEntry != null && _activeEntry!.entry.isWorkSession;
-  final expectedCompletion =
-      (!metTarget && isActivelyWorking) ? DateTime.now().add(remaining) : null;
-
-  return Card(
-    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-    color: metTarget ? Colors.green[50] : Colors.blue[50],
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _reportStat(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Daily Target', style: TextStyle(fontWeight: FontWeight.bold)),
-              GestureDetector(
-                onTap: _showTargetSettingsDialog,
-                child: Row(
-                  children: [
-                    Text('${_targetHours.toStringAsFixed(_targetHours == _targetHours.roundToDouble() ? 0 : 1)} hrs',
-                        style: TextStyle(color: Colors.grey[700])),
-                    const SizedBox(width: 4),
-                    Icon(Icons.edit, size: 14, color: Colors.grey[500]),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: target.inSeconds == 0
-                  ? 0
-                  : (workTime.inSeconds / target.inSeconds).clamp(0.0, 1.0),
-              backgroundColor: Colors.grey[300],
-              color: metTarget ? Colors.green : Colors.blue,
-              minHeight: 8,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            metTarget
-                ? '${_formatDuration(diff)} over target'
-                : '${_formatDuration(diff.abs())} remaining to target',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: metTarget ? Colors.green[800] : Colors.blue[800],
-            ),
-          ),
-          if (expectedCompletion != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Est. target completion: ${_formatTime(expectedCompletion)}',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-            ),
-          ] else if (!metTarget) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Start a work session to see the estimated completion time',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[500],
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-          ],
+          Text(label, style: TextStyle(color: Colors.grey[700])),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
         ],
       ),
-    ),
-  );
-}
+    );
+  }
+
+  String _formatHoursMinutes(int totalSeconds) {
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    return '${hours}h ${minutes}m';
+  }
+
+  Future<void> _showTargetSettingsDialog() async {
+    final controller = TextEditingController(
+      text: _targetHours == _targetHours.roundToDouble()
+          ? _targetHours.toStringAsFixed(0)
+          : _targetHours.toString(),
+    );
+    String? errorText;
+    Set<int> selectedDays = Set.from(_workingWeekdays);
+
+    const weekdayLabels = {
+      1: 'Mon',
+      2: 'Tue',
+      3: 'Wed',
+      4: 'Thu',
+      5: 'Fri',
+      6: 'Sat',
+      7: 'Sun',
+    };
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Target Settings'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Target hours per day',
+                        border: OutlineInputBorder(),
+                        suffixText: 'hrs',
+                      ),
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 8),
+                      Text(errorText!,
+                          style:
+                              const TextStyle(color: Colors.red, fontSize: 13)),
+                    ],
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Working Days',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Used to estimate your monthly target',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: weekdayLabels.entries.map((e) {
+                        final selected = selectedDays.contains(e.key);
+                        return FilterChip(
+                          label: Text(e.value),
+                          selected: selected,
+                          onSelected: (value) {
+                            setDialogState(() {
+                              if (value) {
+                                selectedDays.add(e.key);
+                              } else {
+                                selectedDays.remove(e.key);
+                              }
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${selectedDays.length} working day${selectedDays.length == 1 ? '' : 's'} per week',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final value = double.tryParse(controller.text);
+                    if (value == null || value <= 0 || value > 24) {
+                      setDialogState(() {
+                        errorText = 'Enter a valid number between 0 and 24';
+                      });
+                      return;
+                    }
+                    if (selectedDays.isEmpty) {
+                      setDialogState(() {
+                        errorText = 'Select at least one working day';
+                      });
+                      return;
+                    }
+                    await _saveTargetHours(value);
+                    await _saveWorkingWeekdays(selectedDays);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+  }
+
+  Widget _buildTargetProgress() {
+    final workTime = _calculateDailySummary()['work']!;
+    final target = Duration(minutes: (_targetHours * 60).round());
+    final diff = workTime - target;
+    final metTarget = diff >= Duration.zero;
+    final remaining = metTarget ? Duration.zero : target - workTime;
+
+    final isActivelyWorking =
+        _activeEntry != null && _activeEntry!.entry.isWorkSession;
+    final expectedCompletion = (!metTarget && isActivelyWorking)
+        ? DateTime.now().add(remaining)
+        : null;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: metTarget ? Colors.green[50] : Colors.blue[50],
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Daily Target',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                GestureDetector(
+                  onTap: _showTargetSettingsDialog,
+                  child: Row(
+                    children: [
+                      Text(
+                          '${_targetHours.toStringAsFixed(_targetHours == _targetHours.roundToDouble() ? 0 : 1)} hrs',
+                          style: TextStyle(color: Colors.grey[700])),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit, size: 14, color: Colors.grey[500]),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: target.inSeconds == 0
+                    ? 0
+                    : (workTime.inSeconds / target.inSeconds).clamp(0.0, 1.0),
+                backgroundColor: Colors.grey[300],
+                color: metTarget ? Colors.green : Colors.blue,
+                minHeight: 8,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              metTarget
+                  ? '${_formatDuration(diff)} over target'
+                  : '${_formatDuration(diff.abs())} remaining to target',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: metTarget ? Colors.green[800] : Colors.blue[800],
+              ),
+            ),
+            if (expectedCompletion != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Est. target completion: ${_formatTime(expectedCompletion)}',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ] else if (!metTarget) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Start a work session to see the estimated completion time',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[500],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_activeEntry != null) {
@@ -556,175 +771,176 @@ Widget _buildTargetProgress() {
       }
     });
   }
-Future<DateTime?> _pickDateTime(BuildContext context, DateTime initial) async {
-  final date = await showDatePicker(
-    context: context,
-    initialDate: initial,
-    firstDate: DateTime.now().subtract(const Duration(days: 365)),
-    lastDate: DateTime.now(),
-  );
-  if (date == null) return null;
 
-  if (!context.mounted) return null;
-  final time = await showTimePicker(
-    context: context,
-    initialTime: TimeOfDay.fromDateTime(initial),
-  );
-  if (time == null) return null;
+  Future<DateTime?> _pickDateTime(BuildContext context, DateTime initial) async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now(),
+    );
+    if (date == null) return null;
 
-  return DateTime(date.year, date.month, date.day, time.hour, time.minute);
-}
+    if (!context.mounted) return null;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return null;
 
-Future<void> _addManualEntry() async {
-  bool isWorkSession = true;
-  DateTime checkIn = DateTime.now().subtract(const Duration(hours: 1));
-  DateTime checkOut = DateTime.now();
-  final notesController = TextEditingController();
-  String? errorText;
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
 
-  await showDialog(
-    context: context,
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('Add Manual Entry'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment(
-                        value: true,
-                        label: Text('Work'),
-                        icon: Icon(Icons.work),
+  Future<void> _addManualEntry() async {
+    bool isWorkSession = true;
+    DateTime checkIn = DateTime.now().subtract(const Duration(hours: 1));
+    DateTime checkOut = DateTime.now();
+    final notesController = TextEditingController();
+    String? errorText;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Add Manual Entry'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                          value: true,
+                          label: Text('Work'),
+                          icon: Icon(Icons.work),
+                        ),
+                        ButtonSegment(
+                          value: false,
+                          label: Text('Break'),
+                          icon: Icon(Icons.coffee),
+                        ),
+                      ],
+                      selected: {isWorkSession},
+                      onSelectionChanged: (selection) {
+                        setDialogState(() => isWorkSession = selection.first);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.login),
+                      title: const Text('Check In'),
+                      subtitle: Text(_formatDateTime(checkIn)),
+                      trailing: const Icon(Icons.edit_calendar),
+                      onTap: () async {
+                        final picked = await _pickDateTime(context, checkIn);
+                        if (picked != null) {
+                          setDialogState(() {
+                            checkIn = picked;
+                            errorText = null;
+                          });
+                        }
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.logout),
+                      title: const Text('Check Out'),
+                      subtitle: Text(_formatDateTime(checkOut)),
+                      trailing: const Icon(Icons.edit_calendar),
+                      onTap: () async {
+                        final picked = await _pickDateTime(context, checkOut);
+                        if (picked != null) {
+                          setDialogState(() {
+                            checkOut = picked;
+                            errorText = null;
+                          });
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: notesController,
+                      decoration: const InputDecoration(
+                        labelText: 'Notes (optional)',
+                        border: OutlineInputBorder(),
+                        isDense: true,
                       ),
-                      ButtonSegment(
-                        value: false,
-                        label: Text('Break'),
-                        icon: Icon(Icons.coffee),
+                      maxLines: 2,
+                    ),
+                    if (errorText != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(color: Colors.red, fontSize: 13),
                       ),
                     ],
-                    selected: {isWorkSession},
-                    onSelectionChanged: (selection) {
-                      setDialogState(() => isWorkSession = selection.first);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.login),
-                    title: const Text('Check In'),
-                    subtitle: Text(_formatDateTime(checkIn)),
-                    trailing: const Icon(Icons.edit_calendar),
-                    onTap: () async {
-                      final picked = await _pickDateTime(context, checkIn);
-                      if (picked != null) {
-                        setDialogState(() {
-                          checkIn = picked;
-                          errorText = null;
-                        });
-                      }
-                    },
-                  ),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.logout),
-                    title: const Text('Check Out'),
-                    subtitle: Text(_formatDateTime(checkOut)),
-                    trailing: const Icon(Icons.edit_calendar),
-                    onTap: () async {
-                      final picked = await _pickDateTime(context, checkOut);
-                      if (picked != null) {
-                        setDialogState(() {
-                          checkOut = picked;
-                          errorText = null;
-                        });
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: notesController,
-                    decoration: const InputDecoration(
-                      labelText: 'Notes (optional)',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    maxLines: 2,
-                  ),
-                  if (errorText != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      errorText!,
-                      style: const TextStyle(color: Colors.red, fontSize: 13),
-                    ),
                   ],
-                ],
+                ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  if (!checkOut.isAfter(checkIn)) {
-                    setDialogState(() {
-                      errorText = 'Check out must be after check in';
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    if (!checkOut.isAfter(checkIn)) {
+                      setDialogState(() {
+                        errorText = 'Check out must be after check in';
+                      });
+                      return;
+                    }
+
+                    final overlaps = _entries.any((e) {
+                      final existingOut = e.entry.checkOut ?? DateTime.now();
+                      return checkIn.isBefore(existingOut) &&
+                          checkOut.isAfter(e.entry.checkIn);
                     });
-                    return;
-                  }
 
-                  final overlaps = _entries.any((e) {
-                    final existingOut = e.entry.checkOut ?? DateTime.now();
-                    return checkIn.isBefore(existingOut) &&
-                        checkOut.isAfter(e.entry.checkIn);
-                  });
+                    if (overlaps) {
+                      setDialogState(() {
+                        errorText = 'This overlaps with an existing entry';
+                      });
+                      return;
+                    }
 
-                  if (overlaps) {
-                    setDialogState(() {
-                      errorText = 'This overlaps with an existing entry';
-                    });
-                    return;
-                  }
-
-                  final entry = TimeEntry(
-                    checkIn: checkIn,
-                    isWorkSession: isWorkSession,
-                  );
-                  entry.checkOut = checkOut;
-                  entry.notes = notesController.text.isEmpty
-                      ? null
-                      : notesController.text;
-
-                  await TimeDb.insertEntry(entry);
-                  if (context.mounted) Navigator.pop(context);
-                  await _loadEntries();
-
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Manual entry added'),
-                        backgroundColor: Colors.green,
-                      ),
+                    final entry = TimeEntry(
+                      checkIn: checkIn,
+                      isWorkSession: isWorkSession,
                     );
-                  }
-                },
-                child: const Text('Add'),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
+                    entry.checkOut = checkOut;
+                    entry.notes =
+                        notesController.text.isEmpty ? null : notesController.text;
 
-  notesController.dispose();
-}
+                    await TimeDb.insertEntry(entry);
+                    if (context.mounted) Navigator.pop(context);
+                    await _loadEntries();
+
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Manual entry added'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    notesController.dispose();
+  }
+
   String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
@@ -742,14 +958,14 @@ Future<void> _addManualEntry() async {
         _elapsedTime = DateTime.now().difference(_activeEntry!.entry.checkIn);
       }
       _isLoading = false;
-    }); 
+    });
 
-  if (!_hasShownStartupReminder) {
-    _hasShownStartupReminder = true;
-    if (_activeEntry == null) {
-      _showStartTrackingReminder();
+    if (!_hasShownStartupReminder) {
+      _hasShownStartupReminder = true;
+      if (_activeEntry == null) {
+        _showStartTrackingReminder();
+      }
     }
-  }
   }
 
   Future<void> _checkIn(bool isWorkSession) async {
@@ -767,10 +983,10 @@ Future<void> _addManualEntry() async {
       checkIn: DateTime.now(),
       isWorkSession: isWorkSession,
     );
-    
+
     await TimeDb.insertEntry(entry);
     await _loadEntries();
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('${isWorkSession ? 'Work' : 'Break'} session started'),
@@ -782,14 +998,14 @@ Future<void> _addManualEntry() async {
   Future<void> _checkOut() async {
     if (_activeEntry == null) return;
 
-    // Check minimum duration (10 seconds)
     final duration = DateTime.now().difference(_activeEntry!.entry.checkIn);
     if (duration.inSeconds < 10) {
       final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('Very Short Session'),
-          content: const Text('This session is less than 10 seconds. Are you sure you want to check out?'),
+          content: const Text(
+              'This session is less than 10 seconds. Are you sure you want to check out?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -806,14 +1022,13 @@ Future<void> _addManualEntry() async {
     }
 
     _activeEntry!.entry.checkOut = DateTime.now();
-    _activeEntry!.entry.notes = _notesController.text.isEmpty 
-        ? null 
-        : _notesController.text;
-    
+    _activeEntry!.entry.notes =
+        _notesController.text.isEmpty ? null : _notesController.text;
+
     await TimeDb.updateEntry(_activeEntry!.entry, _activeEntry!.id);
     _notesController.clear();
     await _loadEntries();
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Session completed'),
@@ -824,7 +1039,7 @@ Future<void> _addManualEntry() async {
 
   Future<void> _editEntry(EntryWithId entryWithId) async {
     final notesController = TextEditingController(text: entryWithId.entry.notes);
-    
+
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -858,11 +1073,10 @@ Future<void> _addManualEntry() async {
         ],
       ),
     );
-    
+
     if (result == true) {
-      entryWithId.entry.notes = notesController.text.isEmpty 
-          ? null 
-          : notesController.text;
+      entryWithId.entry.notes =
+          notesController.text.isEmpty ? null : notesController.text;
       await TimeDb.updateEntry(entryWithId.entry, entryWithId.id);
       await _loadEntries();
     }
@@ -888,7 +1102,7 @@ Future<void> _addManualEntry() async {
         ],
       ),
     );
-    
+
     if (confirm == true) {
       await TimeDb.deleteEntry(id);
       await _loadEntries();
@@ -899,9 +1113,9 @@ Future<void> _addManualEntry() async {
     final today = DateTime.now();
     final todayEntries = _entries.where((e) {
       return e.entry.checkIn.year == today.year &&
-             e.entry.checkIn.month == today.month &&
-             e.entry.checkIn.day == today.day &&
-             e.entry.checkOut != null;
+          e.entry.checkIn.month == today.month &&
+          e.entry.checkIn.day == today.day &&
+          e.entry.checkOut != null;
     });
 
     Duration workTime = Duration.zero;
@@ -915,9 +1129,6 @@ Future<void> _addManualEntry() async {
       }
     }
 
-    // Fold in the live elapsed time of the active session, if it started
-    // today, so the target progress bar and completion estimate update in
-    // real time instead of only jumping when the user checks out.
     final active = _activeEntry?.entry;
     if (active != null &&
         active.checkIn.year == today.year &&
@@ -954,12 +1165,11 @@ Future<void> _addManualEntry() async {
     final metTarget = workTime >= target;
     final remaining = metTarget ? Duration.zero : target - workTime;
 
-    // Only project a completion time while a work session is actively
-    // running — a paused/break state shouldn't imply progress is still
-    // being made toward the target.
-    final isActivelyWorking = _activeEntry != null && _activeEntry!.entry.isWorkSession;
-    final expectedCompletion =
-        (!metTarget && isActivelyWorking) ? DateTime.now().add(remaining) : null;
+    final isActivelyWorking =
+        _activeEntry != null && _activeEntry!.entry.isWorkSession;
+    final expectedCompletion = (!metTarget && isActivelyWorking)
+        ? DateTime.now().add(remaining)
+        : null;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1184,38 +1394,33 @@ Future<void> _addManualEntry() async {
     );
   }
 
-void _showStartTrackingReminder() {
-  final notification = LocalNotification(
-    title: 'Start Time Tracking',
-    body: "You're logged in — don't forget to start a work session.",
-    silent: false,
-  );
+  void _showStartTrackingReminder() {
+    _showAppNotification(
+      title: 'Start Time Tracking',
+      body: "You're logged in — don't forget to start a work session.",
+      onTap: _showAndFocusWindow,
+    );
+  }
 
-  notification.onClick = () {
-    windowManager.show();
-    windowManager.focus();
-  };
-
-  notification.show();
-}
   @override
   Widget build(BuildContext context) {
-    final completedEntries = _entries.where((e) => e.entry.checkOut != null).toList();
-    
+    final completedEntries =
+        _entries.where((e) => e.entry.checkOut != null).toList();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Time Tracker'),
         actions: [
-           IconButton(
-    icon: const Icon(Icons.add_circle_outline),
-    onPressed: _addManualEntry,
-    tooltip: 'Add manual entry',
-  ),
-  IconButton(
-  icon: const Icon(Icons.calendar_month),
-  onPressed: _showMonthlyReport,
-  tooltip: 'Monthly report',
-),
+          IconButton(
+            icon: const Icon(Icons.add_circle_outline),
+            onPressed: _addManualEntry,
+            tooltip: 'Add manual entry',
+          ),
+          IconButton(
+            icon: const Icon(Icons.calendar_month),
+            onPressed: _showMonthlyReport,
+            tooltip: 'Monthly report',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadEntries,
@@ -1228,7 +1433,8 @@ void _showStartTrackingReminder() {
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('Clear All Data'),
-                  content: const Text('Are you sure you want to delete all entries? This cannot be undone.'),
+                  content: const Text(
+                      'Are you sure you want to delete all entries? This cannot be undone.'),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),
@@ -1257,7 +1463,7 @@ void _showStartTrackingReminder() {
               children: [
                 _buildActiveSession(),
                 _buildDailySummary(),
-                 _buildTargetProgress(),
+                _buildTargetProgress(),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Align(
@@ -1295,13 +1501,16 @@ void _showStartTrackingReminder() {
                                       ? Colors.blue
                                       : Colors.orange,
                                   child: Icon(
-                                    entry.isWorkSession ? Icons.work : Icons.coffee,
+                                    entry.isWorkSession
+                                        ? Icons.work
+                                        : Icons.coffee,
                                     color: Colors.white,
                                   ),
                                 ),
                                 title: Text(
                                   '${entry.sessionLabel} • ${entry.durationString}',
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                  style:
+                                      const TextStyle(fontWeight: FontWeight.bold),
                                 ),
                                 subtitle: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1321,13 +1530,16 @@ void _showStartTrackingReminder() {
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     IconButton(
-                                      icon: const Icon(Icons.edit, color: Colors.blue),
+                                      icon: const Icon(Icons.edit,
+                                          color: Colors.blue),
                                       onPressed: () => _editEntry(entryWithId),
                                       tooltip: 'Edit notes',
                                     ),
                                     IconButton(
-                                      icon: const Icon(Icons.delete, color: Colors.red),
-                                      onPressed: () => _deleteEntry(entryWithId.id),
+                                      icon: const Icon(Icons.delete,
+                                          color: Colors.red),
+                                      onPressed: () =>
+                                          _deleteEntry(entryWithId.id),
                                       tooltip: 'Delete',
                                     ),
                                   ],
