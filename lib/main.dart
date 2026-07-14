@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
 import 'package:trackthetime/timedb.dart';
+import 'package:trackthetime/nl_entry_parser.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
@@ -813,18 +814,61 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
+  /// Runs the offline NL parser (falling back to on-device Gemini Nano on
+  /// supported Android devices when the regex parser can't find a complete
+  /// time range) against [descriptionController]'s text and applies the
+  /// result to the manual-entry dialog's local state. Shared by both the
+  /// auto-fill icon and pressing Enter in the description field.
+  Future<void> _applyNlParse({
+    required TextEditingController descriptionController,
+    required TextEditingController notesController,
+    required void Function(void Function()) setDialogState,
+    required void Function(DateTime) setCheckIn,
+    required void Function(DateTime) setCheckOut,
+    required void Function(bool) setIsWorkSession,
+    required void Function(String?) setParseWarning,
+    required void Function(bool) setIsParsing,
+  }) async {
+    setDialogState(() => setIsParsing(true));
+    final parsed = await NaturalLanguageEntryParser.parseWithAiFallback(
+      descriptionController.text,
+    );
+    setDialogState(() {
+      setIsParsing(false);
+      if (parsed.checkIn != null) setCheckIn(parsed.checkIn!);
+      if (parsed.checkOut != null) setCheckOut(parsed.checkOut!);
+      setIsWorkSession(parsed.isWorkSession);
+      if (parsed.notes != null) notesController.text = parsed.notes!;
+      setParseWarning(parsed.warnings.isNotEmpty ? parsed.warnings.first : null);
+    });
+  }
+
   Future<void> _addManualEntry() async {
     bool isWorkSession = true;
     DateTime checkIn = DateTime.now().subtract(const Duration(hours: 1));
     DateTime checkOut = DateTime.now();
     final notesController = TextEditingController();
+    final descriptionController = TextEditingController();
     String? errorText;
+    String? parseWarning;
+    bool isParsing = false;
 
     await showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            Future<void> runParse() => _applyNlParse(
+                  descriptionController: descriptionController,
+                  notesController: notesController,
+                  setDialogState: setDialogState,
+                  setCheckIn: (v) => checkIn = v,
+                  setCheckOut: (v) => checkOut = v,
+                  setIsWorkSession: (v) => isWorkSession = v,
+                  setParseWarning: (v) => parseWarning = v,
+                  setIsParsing: (v) => isParsing = v,
+                );
+
             return AlertDialog(
               title: const Text('Add Manual Entry'),
               content: SingleChildScrollView(
@@ -832,6 +876,55 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    TextField(
+                      controller: descriptionController,
+                      decoration: InputDecoration(
+                        labelText: 'Describe it (optional)',
+                        hintText:
+                            'e.g. "worked 2 to 4:30 on the billing module"',
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        suffixIcon: isParsing
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              )
+                            : IconButton(
+                                icon: const Icon(Icons.auto_awesome),
+                                tooltip: 'Auto-fill from description',
+                                onPressed: runParse,
+                              ),
+                      ),
+                      enabled: !isParsing,
+                      onSubmitted: (_) => runParse(),
+                    ),
+                    if (parseWarning != null) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            parseWarning!.contains('AI')
+                                ? Icons.auto_awesome
+                                : Icons.info_outline,
+                            size: 14,
+                            color: Colors.orange[800],
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              parseWarning!,
+                              style: TextStyle(
+                                  fontSize: 12, color: Colors.orange[800]),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 12),
                     SegmentedButton<bool>(
                       segments: const [
                         ButtonSegment(
@@ -961,6 +1054,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     );
 
     notesController.dispose();
+    descriptionController.dispose();
   }
 
   String _formatDuration(Duration duration) {

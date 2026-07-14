@@ -144,6 +144,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  gemini_nano_android:
+    dependency: "direct main"
+    description:
+      name: gemini_nano_android
+      sha256: "3b25e074c5c1f34775b9ca8a7d48ade9cc81f47451c45d6988ad7f7eefd450e0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.0"
   glob:
     dependency: transitive
     description:
