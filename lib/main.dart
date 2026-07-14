@@ -317,6 +317,12 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   bool _anomalyBannerDismissed = false;
   bool _hasWarnedActiveSession = false;
 
+  // --- Mobile view toggle state ---
+  // On phones/tablets there isn't room to show the active session and the
+  // history list at once, so we show one at a time and let a button in the
+  // AppBar flip between them. Desktop always shows both side by side.
+  bool _showHistoryOnMobile = false;
+
   @override
   void initState() {
     super.initState();
@@ -1656,6 +1662,203 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     );
   }
 
+  /// Everything above the history list: active session card, anomaly
+  /// banner, today's summary, and target progress. Used as the left-hand
+  /// panel on desktop, and as one of the two toggle-able panels on mobile.
+  Widget _buildSessionPanel() {
+    return ListView(
+      children: [
+        _buildActiveSession(),
+        _buildAnomalyBanner(),
+        _buildDailySummary(),
+        _buildTargetProgress(),
+      ],
+    );
+  }
+
+  /// Groups completed entries by calendar day (most recent day first, and
+  /// entries within a day kept in their existing relative order), returning
+  /// an ordered list of (dayStart, entries) pairs.
+  List<MapEntry<DateTime, List<EntryWithId>>> _groupEntriesByDate(
+      List<EntryWithId> completedEntries) {
+    final Map<DateTime, List<EntryWithId>> grouped = {};
+    for (final entryWithId in completedEntries) {
+      final checkIn = entryWithId.entry.checkIn;
+      final dayStart = DateTime(checkIn.year, checkIn.month, checkIn.day);
+      grouped.putIfAbsent(dayStart, () => []).add(entryWithId);
+    }
+    final sortedKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
+    return sortedKeys.map((day) => MapEntry(day, grouped[day]!)).toList();
+  }
+
+  /// "Today" / "Yesterday" for recent days, otherwise a full date.
+  String _formatDateHeader(DateTime day) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    if (day == today) return 'Today';
+    if (day == yesterday) return 'Yesterday';
+    return DateFormat('EEEE, MMM d, yyyy').format(day);
+  }
+
+  /// Total work + break duration logged on a given day's entries, for the
+  /// small summary shown next to each date header.
+  String _dayTotalLabel(List<EntryWithId> dayEntries) {
+    final total = dayEntries.fold<Duration>(
+      Duration.zero,
+      (sum, e) => sum + e.entry.duration,
+    );
+    return _formatHoursMinutes(total.inSeconds);
+  }
+
+  Widget _buildHistoryEntryCard(EntryWithId entryWithId) {
+    final entry = entryWithId.entry;
+    final isFlagged = _anomalies.any((a) => a.entryId == entryWithId.id);
+    return Card(
+      margin: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 4,
+      ),
+      shape: isFlagged
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+              side: BorderSide(color: Colors.amber[400]!, width: 1.5),
+            )
+          : null,
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor:
+              entry.isWorkSession ? Colors.blue : Colors.orange,
+          child: Icon(
+            entry.isWorkSession ? Icons.work : Icons.coffee,
+            color: Colors.white,
+          ),
+        ),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                '${entry.sessionLabel} • ${entry.durationString}',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            if (isFlagged) ...[
+              const SizedBox(width: 6),
+              Icon(Icons.warning_amber_rounded,
+                  size: 16, color: Colors.amber[800]),
+            ],
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_formatTime(entry.checkIn) +
+                (entry.checkOut != null
+                    ? ' – ${_formatTime(entry.checkOut!)}'
+                    : '')),
+            if (entry.notes != null)
+              Text(
+                entry.notes!,
+                style: TextStyle(
+                  fontStyle: FontStyle.italic,
+                  color: Colors.grey[600],
+                ),
+              ),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.edit, color: Colors.blue),
+              onPressed: () => _editEntry(entryWithId),
+              tooltip: 'Edit notes',
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.red),
+              onPressed: () => _deleteEntry(entryWithId.id),
+              tooltip: 'Delete',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDateHeader(DateTime day, List<EntryWithId> dayEntries) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            _formatDateHeader(day),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[700],
+              letterSpacing: 0.3,
+            ),
+          ),
+          Text(
+            _dayTotalLabel(dayEntries),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The history list, grouped by date with a header per day, and its
+  /// overall header. Used as the right-hand panel on desktop, and as the
+  /// other toggle-able panel on mobile.
+  Widget _buildHistoryPanel(List<EntryWithId> completedEntries) {
+    final groups = _groupEntriesByDate(completedEntries);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Text(
+            'History',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        Expanded(
+          child: completedEntries.isEmpty
+              ? const Center(
+                  child: Text(
+                    'No history yet',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: groups.length,
+                  itemBuilder: (context, groupIndex) {
+                    final day = groups[groupIndex].key;
+                    final dayEntries = groups[groupIndex].value;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildDateHeader(day, dayEntries),
+                        ...dayEntries.map(_buildHistoryEntryCard),
+                      ],
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final completedEntries =
@@ -1665,6 +1868,19 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
       appBar: AppBar(
         title: const Text('Time Tracker'),
         actions: [
+          // Mobile-only toggle between the session view and the history
+          // view — desktop always shows both side by side, so this button
+          // is unnecessary (and hidden) there.
+          if (!_isDesktop)
+            IconButton(
+              icon: Icon(_showHistoryOnMobile ? Icons.timer : Icons.history),
+              tooltip: _showHistoryOnMobile
+                  ? 'Show current session'
+                  : 'Show history',
+              onPressed: () {
+                setState(() => _showHistoryOnMobile = !_showHistoryOnMobile);
+              },
+            ),
           IconButton(
             icon: const Icon(Icons.add_circle_outline),
             onPressed: _addManualEntry,
@@ -1713,119 +1929,24 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                _buildActiveSession(),
-                _buildAnomalyBanner(),
-                _buildDailySummary(),
-                _buildTargetProgress(),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'History',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
+          : _isDesktop
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      flex: 5,
+                      child: _buildSessionPanel(),
                     ),
-                  ),
-                ),
-                Expanded(
-                  child: completedEntries.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No history yet',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: completedEntries.length,
-                          itemBuilder: (context, index) {
-                            final entryWithId = completedEntries[index];
-                            final entry = entryWithId.entry;
-                            final isFlagged = _anomalies
-                                .any((a) => a.entryId == entryWithId.id);
-                            return Card(
-                              margin: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 4,
-                              ),
-                              shape: isFlagged
-                                  ? RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(4),
-                                      side: BorderSide(
-                                          color: Colors.amber[400]!, width: 1.5),
-                                    )
-                                  : null,
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: entry.isWorkSession
-                                      ? Colors.blue
-                                      : Colors.orange,
-                                  child: Icon(
-                                    entry.isWorkSession
-                                        ? Icons.work
-                                        : Icons.coffee,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                title: Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        '${entry.sessionLabel} • ${entry.durationString}',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                    if (isFlagged) ...[
-                                      const SizedBox(width: 6),
-                                      Icon(Icons.warning_amber_rounded,
-                                          size: 16, color: Colors.amber[800]),
-                                    ],
-                                  ],
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(_formatDateTime(entry.checkIn)),
-                                    if (entry.notes != null)
-                                      Text(
-                                        entry.notes!,
-                                        style: TextStyle(
-                                          fontStyle: FontStyle.italic,
-                                          color: Colors.grey[600],
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit,
-                                          color: Colors.blue),
-                                      onPressed: () => _editEntry(entryWithId),
-                                      tooltip: 'Edit notes',
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete,
-                                          color: Colors.red),
-                                      onPressed: () =>
-                                          _deleteEntry(entryWithId.id),
-                                      tooltip: 'Delete',
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      flex: 4,
+                      child: _buildHistoryPanel(completedEntries),
+                    ),
+                  ],
+                )
+              : (_showHistoryOnMobile
+                  ? _buildHistoryPanel(completedEntries)
+                  : _buildSessionPanel()),
     );
   }
 }
