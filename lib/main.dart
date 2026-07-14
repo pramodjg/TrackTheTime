@@ -311,6 +311,11 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   Timer? _timer;
   Duration _elapsedTime = Duration.zero;
 
+  // --- Anomaly detection state ---
+  List<SessionAnomaly> _anomalies = [];
+  bool _anomalyBannerDismissed = false;
+  bool _hasWarnedActiveSession = false;
+
   @override
   void initState() {
     super.initState();
@@ -768,6 +773,23 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
         setState(() {
           _elapsedTime = DateTime.now().difference(_activeEntry!.entry.checkIn);
         });
+
+        // Live watchdog: fire once per active session (not once per second)
+        // if it's been running implausibly long. This catches "forgot to
+        // check out" in the moment, rather than after the fact in history.
+        if (!_hasWarnedActiveSession && _elapsedTime > const Duration(hours: 10)) {
+          _hasWarnedActiveSession = true;
+          _showAppNotification(
+            title: 'Still checked in',
+            body:
+                'Your ${_activeEntry!.entry.sessionLabel.toLowerCase()} session has been '
+                'running for ${_formatDuration(_elapsedTime)}. Still working?',
+            onTap: _showAndFocusWindow,
+          );
+        }
+      } else {
+        // Reset so the next session gets its own fresh warning.
+        _hasWarnedActiveSession = false;
       }
     });
   }
@@ -951,11 +973,17 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   Future<void> _loadEntries() async {
     setState(() => _isLoading = true);
     final entries = await TimeDb.getAllEntriesWithIds();
+    final anomalies = await TimeDb.detectAnomalies(entries);
     setState(() {
       _entries = entries;
       _activeEntry = entries.where((e) => e.entry.checkOut == null).firstOrNull;
       if (_activeEntry != null) {
         _elapsedTime = DateTime.now().difference(_activeEntry!.entry.checkIn);
+      }
+      _anomalies = anomalies;
+      // Re-show the banner if new anomalies showed up since it was dismissed.
+      if (anomalies.isNotEmpty) {
+        _anomalyBannerDismissed = false;
       }
       _isLoading = false;
     });
@@ -1150,6 +1178,138 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
   String _formatTime(DateTime dt) {
     return DateFormat('h:mm a').format(dt);
+  }
+
+  // --- Anomaly banner helpers ---
+
+  IconData _iconForAnomaly(AnomalyType type) {
+    switch (type) {
+      case AnomalyType.forgottenCheckout:
+        return Icons.timer_off;
+      case AnomalyType.unusuallyShort:
+        return Icons.bolt;
+      case AnomalyType.overlapping:
+        return Icons.compare_arrows;
+      case AnomalyType.overnightSpan:
+        return Icons.nights_stay;
+    }
+  }
+
+  String _titleForAnomaly(AnomalyType type) {
+    switch (type) {
+      case AnomalyType.forgottenCheckout:
+        return 'Possible forgotten checkout';
+      case AnomalyType.unusuallyShort:
+        return 'Unusually short entry';
+      case AnomalyType.overlapping:
+        return 'Overlapping entries';
+      case AnomalyType.overnightSpan:
+        return 'Session spans midnight';
+    }
+  }
+
+  void _showAnomalyDetails() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.amber[800]),
+            const SizedBox(width: 8),
+            const Text('Possible data issues'),
+          ],
+        ),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: _anomalies.map((a) {
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(_iconForAnomaly(a.type), color: Colors.amber[800]),
+                  title: Text(
+                    _titleForAnomaly(a.type),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  subtitle: Text(a.message, style: const TextStyle(fontSize: 12)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit, size: 18),
+                    tooltip: 'Edit this entry',
+                    onPressed: () {
+                      Navigator.pop(context);
+                      final match = _entries
+                          .where((e) => e.id == a.entryId)
+                          .firstOrNull;
+                      if (match != null) _editEntry(match);
+                    },
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAnomalyBanner() {
+    if (_anomalies.isEmpty || _anomalyBannerDismissed) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.amber[50],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.amber[200]!),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.amber[800], size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: GestureDetector(
+              onTap: _showAnomalyDetails,
+              child: Text(
+                _anomalies.length == 1
+                    ? '1 entry looks worth a second look'
+                    : '${_anomalies.length} entries look worth a second look',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.amber[900],
+                ),
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _showAnomalyDetails,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Review', style: TextStyle(fontSize: 13)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 16),
+            color: Colors.amber[900],
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () => setState(() => _anomalyBannerDismissed = true),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildDailySummary() {
@@ -1462,6 +1622,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
           : Column(
               children: [
                 _buildActiveSession(),
+                _buildAnomalyBanner(),
                 _buildDailySummary(),
                 _buildTargetProgress(),
                 const Padding(
@@ -1490,11 +1651,20 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                           itemBuilder: (context, index) {
                             final entryWithId = completedEntries[index];
                             final entry = entryWithId.entry;
+                            final isFlagged = _anomalies
+                                .any((a) => a.entryId == entryWithId.id);
                             return Card(
                               margin: const EdgeInsets.symmetric(
                                 horizontal: 16,
                                 vertical: 4,
                               ),
+                              shape: isFlagged
+                                  ? RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(4),
+                                      side: BorderSide(
+                                          color: Colors.amber[400]!, width: 1.5),
+                                    )
+                                  : null,
                               child: ListTile(
                                 leading: CircleAvatar(
                                   backgroundColor: entry.isWorkSession
@@ -1507,10 +1677,21 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                                     color: Colors.white,
                                   ),
                                 ),
-                                title: Text(
-                                  '${entry.sessionLabel} • ${entry.durationString}',
-                                  style:
-                                      const TextStyle(fontWeight: FontWeight.bold),
+                                title: Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        '${entry.sessionLabel} • ${entry.durationString}',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    if (isFlagged) ...[
+                                      const SizedBox(width: 6),
+                                      Icon(Icons.warning_amber_rounded,
+                                          size: 16, color: Colors.amber[800]),
+                                    ],
+                                  ],
                                 ),
                                 subtitle: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
