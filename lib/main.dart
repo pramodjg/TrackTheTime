@@ -32,6 +32,96 @@ bool get _isDesktop =>
 final FlutterLocalNotificationsPlugin _mobileNotifications =
     FlutterLocalNotificationsPlugin();
 
+// ---------------------------------------------------------------------------
+// Design system — one place for the palette, spacing and shape language so
+// individual widgets stop hard-coding Colors.blue/orange/etc. Work sessions
+// are indigo, breaks are amber; both read clearly against the neutral
+// surface without competing with the amber "needs attention" anomaly color.
+// ---------------------------------------------------------------------------
+class AppColors {
+  static const work = Color(0xFF4F5FE8);
+  static const workDark = Color(0xFF3B48C4);
+  static const workSurface = Color(0xFFEEF0FD);
+  static const breakColor = Color(0xFFE0912B);
+  static const breakSurface = Color(0xFFFCF1E1);
+  static const success = Color(0xFF1F9D66);
+  static const successSurface = Color(0xFFE7F7EF);
+  static const warning = Color(0xFFB4790A);
+  static const warningSurface = Color(0xFFFDF3DD);
+  static const danger = Color(0xFFD84C4C);
+  static const surfaceMuted = Color(0xFFF6F6FA);
+}
+
+ThemeData buildAppTheme() {
+  final scheme = ColorScheme.fromSeed(
+    seedColor: AppColors.work,
+    brightness: Brightness.light,
+  );
+  return ThemeData(
+    useMaterial3: true,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: AppColors.surfaceMuted,
+    appBarTheme: AppBarTheme(
+      backgroundColor: Colors.white,
+      foregroundColor: const Color(0xFF1D1E2C),
+      elevation: 0,
+      scrolledUnderElevation: 1,
+      centerTitle: false,
+      titleTextStyle: const TextStyle(
+        fontSize: 19,
+        fontWeight: FontWeight.w700,
+        color: Color(0xFF1D1E2C),
+      ),
+    ),
+    cardTheme: CardThemeData(
+      elevation: 0,
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
+      margin: EdgeInsets.zero,
+    ),
+    textTheme: const TextTheme(
+      titleLarge: TextStyle(fontWeight: FontWeight.w700),
+      titleMedium: TextStyle(fontWeight: FontWeight.w700),
+      titleSmall: TextStyle(fontWeight: FontWeight.w600),
+    ),
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: AppColors.surfaceMuted,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(color: scheme.primary, width: 1.5),
+      ),
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        side: BorderSide(color: Colors.grey.shade300),
+      ),
+    ),
+    dividerTheme: DividerThemeData(color: Colors.grey.shade200, thickness: 1),
+  );
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -236,10 +326,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.deepPurple,
-      ),
+      theme: buildAppTheme(),
       home: const DashboardScreen(),
     );
   }
@@ -259,35 +346,54 @@ class DashboardScreen extends StatelessWidget {
             // Tray/minimize messaging only makes sense on desktop — on
             // Android the app just runs normally in the foreground.
             if (_isDesktop)
-              Column(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  const Icon(Icons.dns_rounded,
-                      size: 12, color: Colors.deepPurple),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Background Service Status: Active',
-                    style:
-                        TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      'Closing this interface page keeps the operation active inside your taskbar utility ecosystem.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 32),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Colors.grey.shade200)),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: AppColors.success,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Background service active',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.hide_source),
-                    label: const Text(''),
-                    onPressed: () async {
-                      await windowManager.hide();
-                    },
-                  ),
-                ],
+                    const SizedBox(height: 6),
+                    Text(
+                      'Closing this window keeps tracking running from the system tray.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    ),
+                    const SizedBox(height: 14),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.remove_red_eye_outlined, size: 18),
+                      label: const Text('Minimize to tray'),
+                      onPressed: () async {
+                        await windowManager.hide();
+                      },
+                    ),
+                  ],
+                ),
               ),
           ],
         ),
@@ -410,6 +516,8 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                 final monthlyMet = totalSeconds >= monthlyTargetSeconds;
 
                 return AlertDialog(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20)),
                   title: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -469,14 +577,20 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                               ),
                               const SizedBox(height: 8),
                               ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: LinearProgressIndicator(
-                                  value: monthlyProgress,
-                                  backgroundColor: Colors.grey[300],
-                                  color: monthlyMet
-                                      ? Colors.green
-                                      : Colors.deepPurple,
-                                  minHeight: 8,
+                                borderRadius: BorderRadius.circular(6),
+                                child: TweenAnimationBuilder<double>(
+                                  tween: Tween(begin: 0, end: monthlyProgress),
+                                  duration: const Duration(milliseconds: 500),
+                                  curve: Curves.easeOutCubic,
+                                  builder: (context, value, _) =>
+                                      LinearProgressIndicator(
+                                    value: value,
+                                    backgroundColor: Colors.grey[200],
+                                    color: monthlyMet
+                                        ? AppColors.success
+                                        : AppColors.work,
+                                    minHeight: 10,
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -488,8 +602,8 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
                                   color: monthlyMet
-                                      ? Colors.green[800]
-                                      : Colors.deepPurple[700],
+                                      ? AppColors.success
+                                      : AppColors.workDark,
                                 ),
                               ),
                               const Divider(height: 24),
@@ -515,7 +629,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                                                   : Icons
                                                       .remove_circle_outline,
                                               color: met
-                                                  ? Colors.green
+                                                  ? AppColors.success
                                                   : Colors.grey,
                                               size: 20,
                                             ),
@@ -591,6 +705,8 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
               title: const Text('Target Settings'),
               content: SingleChildScrollView(
                 child: Column(
@@ -604,7 +720,6 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                           const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
                         labelText: 'Target hours per day',
-                        border: OutlineInputBorder(),
                         suffixText: 'hrs',
                       ),
                     ),
@@ -612,7 +727,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                       const SizedBox(height: 8),
                       Text(errorText!,
                           style:
-                              const TextStyle(color: Colors.red, fontSize: 13)),
+                              const TextStyle(color: AppColors.danger, fontSize: 13)),
                     ],
                     const SizedBox(height: 20),
                     const Text(
@@ -633,6 +748,17 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                         return FilterChip(
                           label: Text(e.value),
                           selected: selected,
+                          showCheckmark: false,
+                          selectedColor: AppColors.workSurface,
+                          labelStyle: TextStyle(
+                            color: selected ? AppColors.workDark : Colors.grey[700],
+                            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                          ),
+                          side: BorderSide(
+                            color: selected
+                                ? AppColors.work
+                                : Colors.grey.shade300,
+                          ),
                           onSelected: (value) {
                             setDialogState(() {
                               if (value) {
@@ -658,7 +784,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                   onPressed: () => Navigator.pop(context),
                   child: const Text('Cancel'),
                 ),
-                TextButton(
+                FilledButton(
                   onPressed: () async {
                     final value = double.tryParse(controller.text);
                     if (value == null || value <= 0 || value > 24) {
@@ -695,6 +821,8 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     final diff = workTime - target;
     final metTarget = diff >= Duration.zero;
     final remaining = metTarget ? Duration.zero : target - workTime;
+    final progress =
+        target.inSeconds == 0 ? 0.0 : (workTime.inSeconds / target.inSeconds).clamp(0.0, 1.0);
 
     final isActivelyWorking =
         _activeEntry != null && _activeEntry!.entry.isWorkSession;
@@ -704,51 +832,67 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: metTarget ? Colors.green[50] : Colors.blue[50],
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Daily Target',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                GestureDetector(
+                Row(
+                  children: [
+                    Icon(Icons.flag_rounded,
+                        size: 18,
+                        color: metTarget ? AppColors.success : AppColors.work),
+                    const SizedBox(width: 6),
+                    const Text('Daily Target',
+                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                  ],
+                ),
+                InkWell(
+                  borderRadius: BorderRadius.circular(8),
                   onTap: _showTargetSettingsDialog,
-                  child: Row(
-                    children: [
-                      Text(
-                          '${_targetHours.toStringAsFixed(_targetHours == _targetHours.roundToDouble() ? 0 : 1)} hrs',
-                          style: TextStyle(color: Colors.grey[700])),
-                      const SizedBox(width: 4),
-                      Icon(Icons.edit, size: 14, color: Colors.grey[500]),
-                    ],
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    child: Row(
+                      children: [
+                        Text(
+                            '${_targetHours.toStringAsFixed(_targetHours == _targetHours.roundToDouble() ? 0 : 1)} hrs',
+                            style: TextStyle(
+                                color: Colors.grey[700], fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 4),
+                        Icon(Icons.edit, size: 14, color: Colors.grey[500]),
+                      ],
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 14),
             ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: target.inSeconds == 0
-                    ? 0
-                    : (workTime.inSeconds / target.inSeconds).clamp(0.0, 1.0),
-                backgroundColor: Colors.grey[300],
-                color: metTarget ? Colors.green : Colors.blue,
-                minHeight: 8,
+              borderRadius: BorderRadius.circular(8),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: progress),
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, _) => LinearProgressIndicator(
+                  value: value,
+                  backgroundColor: Colors.grey[200],
+                  color: metTarget ? AppColors.success : AppColors.work,
+                  minHeight: 10,
+                ),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(
               metTarget
                   ? '${_formatDuration(diff)} over target'
                   : '${_formatDuration(diff.abs())} remaining to target',
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: metTarget ? Colors.green[800] : Colors.blue[800],
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+                color: metTarget ? AppColors.success : AppColors.workDark,
               ),
             ),
             if (expectedCompletion != null) ...[
@@ -876,6 +1020,8 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                 );
 
             return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20)),
               title: const Text('Add Manual Entry'),
               content: SingleChildScrollView(
                 child: Column(
@@ -888,8 +1034,6 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                         labelText: 'Describe it (optional)',
                         hintText:
                             'e.g. "worked 2 to 4:30 on the billing module"',
-                        border: const OutlineInputBorder(),
-                        isDense: true,
                         suffixIcon: isParsing
                             ? const Padding(
                                 padding: EdgeInsets.all(12),
@@ -909,7 +1053,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                       onSubmitted: (_) => runParse(),
                     ),
                     if (parseWarning != null) ...[
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       Row(
                         children: [
                           Icon(
@@ -917,31 +1061,35 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                                 ? Icons.auto_awesome
                                 : Icons.info_outline,
                             size: 14,
-                            color: Colors.orange[800],
+                            color: AppColors.warning,
                           ),
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
                               parseWarning!,
-                              style: TextStyle(
-                                  fontSize: 12, color: Colors.orange[800]),
+                              style: const TextStyle(
+                                  fontSize: 12, color: AppColors.warning),
                             ),
                           ),
                         ],
                       ),
                     ],
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 14),
                     SegmentedButton<bool>(
+                      style: SegmentedButton.styleFrom(
+                        selectedBackgroundColor: AppColors.workSurface,
+                        selectedForegroundColor: AppColors.workDark,
+                      ),
                       segments: const [
                         ButtonSegment(
                           value: true,
                           label: Text('Work'),
-                          icon: Icon(Icons.work),
+                          icon: Icon(Icons.work_outline),
                         ),
                         ButtonSegment(
                           value: false,
                           label: Text('Break'),
-                          icon: Icon(Icons.coffee),
+                          icon: Icon(Icons.coffee_outlined),
                         ),
                       ],
                       selected: {isWorkSession},
@@ -949,13 +1097,13 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                         setDialogState(() => isWorkSession = selection.first);
                       },
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 8),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.login),
                       title: const Text('Check In'),
                       subtitle: Text(_formatDateTime(checkIn)),
-                      trailing: const Icon(Icons.edit_calendar),
+                      trailing: const Icon(Icons.edit_calendar, size: 20),
                       onTap: () async {
                         final picked = await _pickDateTime(context, checkIn);
                         if (picked != null) {
@@ -971,7 +1119,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                       leading: const Icon(Icons.logout),
                       title: const Text('Check Out'),
                       subtitle: Text(_formatDateTime(checkOut)),
-                      trailing: const Icon(Icons.edit_calendar),
+                      trailing: const Icon(Icons.edit_calendar, size: 20),
                       onTap: () async {
                         final picked = await _pickDateTime(context, checkOut);
                         if (picked != null) {
@@ -982,12 +1130,11 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                         }
                       },
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: notesController,
                       decoration: const InputDecoration(
                         labelText: 'Notes (optional)',
-                        border: OutlineInputBorder(),
                         isDense: true,
                       ),
                       maxLines: 2,
@@ -996,7 +1143,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                       const SizedBox(height: 12),
                       Text(
                         errorText!,
-                        style: const TextStyle(color: Colors.red, fontSize: 13),
+                        style: const TextStyle(color: AppColors.danger, fontSize: 13),
                       ),
                     ],
                   ],
@@ -1007,7 +1154,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                   onPressed: () => Navigator.pop(context),
                   child: const Text('Cancel'),
                 ),
-                TextButton(
+                FilledButton(
                   onPressed: () async {
                     if (!checkOut.isAfter(checkIn)) {
                       setDialogState(() {
@@ -1043,9 +1190,12 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Manual entry added'),
-                          backgroundColor: Colors.green,
+                        SnackBar(
+                          content: const Text('Manual entry added'),
+                          backgroundColor: AppColors.success,
+                          behavior: SnackBarBehavior.floating,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
                         ),
                       );
                     }
@@ -1099,9 +1249,11 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   Future<void> _checkIn(bool isWorkSession) async {
     if (_activeEntry != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please check out of the current session first'),
-          backgroundColor: Colors.orange,
+        SnackBar(
+          content: const Text('Please check out of the current session first'),
+          backgroundColor: AppColors.breakColor,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
       return;
@@ -1115,12 +1267,16 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     await TimeDb.insertEntry(entry);
     await _loadEntries();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${isWorkSession ? 'Work' : 'Break'} session started'),
-        backgroundColor: Colors.green,
-      ),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${isWorkSession ? 'Work' : 'Break'} session started'),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
   }
 
   Future<void> _checkOut() async {
@@ -1131,6 +1287,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
       final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Text('Very Short Session'),
           content: const Text(
               'This session is less than 10 seconds. Are you sure you want to check out?'),
@@ -1139,7 +1296,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
               onPressed: () => Navigator.pop(context, false),
               child: const Text('Cancel'),
             ),
-            TextButton(
+            FilledButton(
               onPressed: () => Navigator.pop(context, true),
               child: const Text('Check Out'),
             ),
@@ -1157,12 +1314,16 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     _notesController.clear();
     await _loadEntries();
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Session completed'),
-        backgroundColor: Colors.blue,
-      ),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Session completed'),
+          backgroundColor: AppColors.work,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
   }
 
   Future<void> _editEntry(EntryWithId entryWithId) async {
@@ -1171,20 +1332,21 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Edit Entry'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${entryWithId.entry.sessionLabel} Session'),
-            const SizedBox(height: 8),
-            Text('Duration: ${entryWithId.entry.durationString}'),
+            Text('${entryWithId.entry.sessionLabel} Session',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Duration: ${entryWithId.entry.durationString}',
+                style: TextStyle(color: Colors.grey[600], fontSize: 13)),
             const SizedBox(height: 16),
             TextField(
               controller: notesController,
-              decoration: const InputDecoration(
-                labelText: 'Notes',
-                border: OutlineInputBorder(),
-              ),
+              decoration: const InputDecoration(labelText: 'Notes'),
               maxLines: 3,
             ),
           ],
@@ -1194,7 +1356,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Save'),
           ),
@@ -1211,10 +1373,11 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     notesController.dispose();
   }
 
-  Future<void> _deleteEntry(int id) async {
+  Future<bool> _confirmDeleteEntry() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Delete Entry'),
         content: const Text('Are you sure you want to delete this entry?'),
         actions: [
@@ -1222,19 +1385,21 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
             onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
           ),
         ],
       ),
     );
+    return confirm == true;
+  }
 
-    if (confirm == true) {
-      await TimeDb.deleteEntry(id);
-      await _loadEntries();
-    }
+  Future<void> _deleteEntry(int id) async {
+    if (!await _confirmDeleteEntry()) return;
+    await TimeDb.deleteEntry(id);
+    await _loadEntries();
   }
 
   Map<String, Duration> _calculateDailySummary() {
@@ -1312,9 +1477,10 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.amber[800]),
+            const Icon(Icons.warning_amber_rounded, color: AppColors.warning),
             const SizedBox(width: 8),
             const Text('Possible data issues'),
           ],
@@ -1327,7 +1493,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
               children: _anomalies.map((a) {
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: Icon(_iconForAnomaly(a.type), color: Colors.amber[800]),
+                  leading: Icon(_iconForAnomaly(a.type), color: AppColors.warning),
                   title: Text(
                     _titleForAnomaly(a.type),
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
@@ -1366,15 +1532,14 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.amber[50],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.amber[200]!),
+        color: AppColors.warningSurface,
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         children: [
-          Icon(Icons.warning_amber_rounded, color: Colors.amber[800], size: 20),
+          const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 20),
           const SizedBox(width: 10),
           Expanded(
             child: GestureDetector(
@@ -1383,10 +1548,10 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                 _anomalies.length == 1
                     ? '1 entry looks worth a second look'
                     : '${_anomalies.length} entries look worth a second look',
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Colors.amber[900],
+                  color: AppColors.warning,
                 ),
               ),
             ),
@@ -1394,20 +1559,51 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
           TextButton(
             onPressed: _showAnomalyDetails,
             style: TextButton.styleFrom(
+              foregroundColor: AppColors.warning,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            child: const Text('Review', style: TextStyle(fontSize: 13)),
+            child: const Text('Review', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
           ),
           IconButton(
             icon: const Icon(Icons.close, size: 16),
-            color: Colors.amber[900],
+            color: AppColors.warning,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onPressed: () => setState(() => _anomalyBannerDismissed = true),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _statTile({
+    required IconData icon,
+    required Color color,
+    required Color surface,
+    required String value,
+    required String label,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: surface,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 22),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: color),
+            ),
+            const SizedBox(height: 2),
+            Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ],
+        ),
       ),
     );
   }
@@ -1433,70 +1629,53 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.grey[100],
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(18),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Today\'s Summary',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              "Today's Summary",
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                Column(
-                  children: [
-                    const Icon(Icons.work, color: Colors.blue),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDuration(workTime),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                    const Text('Work', style: TextStyle(color: Colors.grey)),
-                  ],
+                _statTile(
+                  icon: Icons.work_rounded,
+                  color: AppColors.work,
+                  surface: AppColors.workSurface,
+                  value: _formatDuration(workTime),
+                  label: 'Work',
                 ),
-                Column(
-                  children: [
-                    const Icon(Icons.coffee, color: Colors.orange),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDuration(breakTime),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange,
-                      ),
-                    ),
-                    const Text('Break', style: TextStyle(color: Colors.grey)),
-                  ],
+                const SizedBox(width: 10),
+                _statTile(
+                  icon: Icons.coffee_rounded,
+                  color: AppColors.breakColor,
+                  surface: AppColors.breakSurface,
+                  value: _formatDuration(breakTime),
+                  label: 'Break',
                 ),
               ],
             ),
             if (metTarget) ...[
-              const Divider(height: 24),
+              const SizedBox(height: 14),
               Row(
                 children: [
-                  Icon(Icons.check_circle, size: 16, color: Colors.green[700]),
+                  const Icon(Icons.check_circle, size: 16, color: AppColors.success),
                   const SizedBox(width: 6),
-                  Text(
+                  const Text(
                     'Daily target reached',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Colors.green[700],
+                      color: AppColors.success,
                     ),
                   ),
                 ],
               ),
             ] else if (expectedCompletion != null) ...[
-              const Divider(height: 24),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Icon(Icons.schedule, size: 16, color: Colors.grey[700]),
@@ -1512,7 +1691,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                 ],
               ),
             ] else ...[
-              const Divider(height: 24),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Icon(Icons.schedule, size: 16, color: Colors.grey[400]),
@@ -1539,36 +1718,49 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
       return Card(
         margin: const EdgeInsets.all(16),
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
           child: Column(
             children: [
-              const Icon(Icons.timer_off, size: 48, color: Colors.grey),
-              const SizedBox(height: 12),
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceMuted,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.hourglass_empty_rounded,
+                    size: 34, color: Colors.grey[500]),
+              ),
+              const SizedBox(height: 16),
               const Text(
                 'No Active Session',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 4),
+              Text(
+                'Start tracking to see your timer here',
+                style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+              ),
+              const SizedBox(height: 24),
               Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton.icon(
+                    child: FilledButton.icon(
                       onPressed: () => _checkIn(true),
-                      icon: const Icon(Icons.work),
+                      icon: const Icon(Icons.work_outline),
                       label: const Text('Start Work'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.all(16),
-                      ),
+                      style: FilledButton.styleFrom(backgroundColor: AppColors.work),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: ElevatedButton.icon(
+                    child: OutlinedButton.icon(
                       onPressed: () => _checkIn(false),
-                      icon: const Icon(Icons.coffee),
+                      icon: const Icon(Icons.coffee_outlined),
                       label: const Text('Start Break'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.all(16),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.breakColor,
+                        side: const BorderSide(color: AppColors.breakColor),
                       ),
                     ),
                   ),
@@ -1581,75 +1773,83 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     }
 
     final entry = _activeEntry!.entry;
+    final accent = entry.isWorkSession ? AppColors.work : AppColors.breakColor;
+    final surface = entry.isWorkSession ? AppColors.workSurface : AppColors.breakSurface;
+
     return Card(
       margin: const EdgeInsets.all(16),
-      color: entry.isWorkSession ? Colors.blue[50] : Colors.orange[50],
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            color: surface,
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            child: Column(
               children: [
-                Icon(
-                  entry.isWorkSession ? Icons.work : Icons.coffee,
-                  color: entry.isWorkSession ? Colors.blue : Colors.orange,
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${entry.sessionLabel} session in progress',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: accent,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(height: 18),
                 Text(
-                  '${entry.sessionLabel} Session',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                  _formatDuration(_elapsedTime),
+                  style: TextStyle(
+                    fontSize: 46,
+                    fontWeight: FontWeight.w800,
+                    color: accent,
+                    letterSpacing: 1,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Started ${_formatDateTime(entry.checkIn)}',
+                  style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                TextField(
+                  controller: _notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes (optional)',
+                    isDense: true,
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _checkOut,
+                    icon: const Icon(Icons.stop_circle_outlined),
+                    label: const Text('Check Out'),
+                    style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Center(
-              child: Text(
-                _formatDuration(_elapsedTime),
-                style: TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  color: entry.isWorkSession ? Colors.blue : Colors.orange,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Center(
-              child: Text(
-                'Started: ${_formatDateTime(entry.checkIn)}',
-                style: TextStyle(color: Colors.grey[700]),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _notesController,
-              decoration: const InputDecoration(
-                labelText: 'Notes (optional)',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _checkOut,
-                icon: const Icon(Icons.stop),
-                label: const Text('Check Out'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.all(16),
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1667,6 +1867,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   /// panel on desktop, and as one of the two toggle-able panels on mobile.
   Widget _buildSessionPanel() {
     return ListView(
+      padding: const EdgeInsets.only(bottom: 16),
       children: [
         _buildActiveSession(),
         _buildAnomalyBanner(),
@@ -1714,70 +1915,101 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   Widget _buildHistoryEntryCard(EntryWithId entryWithId) {
     final entry = entryWithId.entry;
     final isFlagged = _anomalies.any((a) => a.entryId == entryWithId.id);
-    return Card(
-      margin: const EdgeInsets.symmetric(
-        horizontal: 16,
-        vertical: 4,
+    final accent = entry.isWorkSession ? AppColors.work : AppColors.breakColor;
+
+    return Dismissible(
+      key: ValueKey('entry-${entryWithId.id}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+        decoration: BoxDecoration(
+          color: AppColors.danger,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: const Icon(Icons.delete_outline, color: Colors.white),
       ),
-      shape: isFlagged
-          ? RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-              side: BorderSide(color: Colors.amber[400]!, width: 1.5),
-            )
-          : null,
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor:
-              entry.isWorkSession ? Colors.blue : Colors.orange,
-          child: Icon(
-            entry.isWorkSession ? Icons.work : Icons.coffee,
-            color: Colors.white,
+      confirmDismiss: (_) => _confirmDeleteEntry(),
+      onDismissed: (_) async {
+        await TimeDb.deleteEntry(entryWithId.id);
+        await _loadEntries();
+      },
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isFlagged ? AppColors.warning.withOpacity(0.5) : Colors.grey.shade200,
+            width: isFlagged ? 1.4 : 1,
           ),
         ),
-        title: Row(
+        child: Row(
           children: [
-            Flexible(
-              child: Text(
-                '${entry.sessionLabel} • ${entry.durationString}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+            Container(
+              width: 4,
+              height: 56,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: accent,
+                borderRadius: const BorderRadius.horizontal(left: Radius.circular(2)),
               ),
             ),
-            if (isFlagged) ...[
-              const SizedBox(width: 6),
-              Icon(Icons.warning_amber_rounded,
-                  size: 16, color: Colors.amber[800]),
-            ],
-          ],
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(_formatTime(entry.checkIn) +
-                (entry.checkOut != null
-                    ? ' – ${_formatTime(entry.checkOut!)}'
-                    : '')),
-            if (entry.notes != null)
-              Text(
-                entry.notes!,
-                style: TextStyle(
-                  fontStyle: FontStyle.italic,
-                  color: Colors.grey[600],
+            Expanded(
+              child: ListTile(
+                dense: false,
+                leading: Icon(
+                  entry.isWorkSession ? Icons.work_rounded : Icons.coffee_rounded,
+                  color: accent,
+                ),
+                title: Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        '${entry.sessionLabel} • ${entry.durationString}',
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                      ),
+                    ),
+                    if (isFlagged) ...[
+                      const SizedBox(width: 6),
+                      const Icon(Icons.warning_amber_rounded,
+                          size: 15, color: AppColors.warning),
+                    ],
+                  ],
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _formatTime(entry.checkIn) +
+                          (entry.checkOut != null
+                              ? ' – ${_formatTime(entry.checkOut!)}'
+                              : ''),
+                      style: TextStyle(fontSize: 12.5, color: Colors.grey[600]),
+                    ),
+                    if (entry.notes != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          entry.notes!,
+                          style: TextStyle(
+                            fontStyle: FontStyle.italic,
+                            color: Colors.grey[500],
+                            fontSize: 12.5,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+                trailing: IconButton(
+                  icon: Icon(Icons.edit_outlined, color: Colors.grey[500], size: 20),
+                  onPressed: () => _editEntry(entryWithId),
+                  tooltip: 'Edit notes',
                 ),
               ),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.edit, color: Colors.blue),
-              onPressed: () => _editEntry(entryWithId),
-              tooltip: 'Edit notes',
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete, color: Colors.red),
-              onPressed: () => _deleteEntry(entryWithId.id),
-              tooltip: 'Delete',
             ),
           ],
         ),
@@ -1787,24 +2019,24 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
   Widget _buildDateHeader(DateTime day, List<EntryWithId> dayEntries) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            _formatDateHeader(day),
+            _formatDateHeader(day).toUpperCase(),
             style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[700],
-              letterSpacing: 0.3,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Colors.grey[500],
+              letterSpacing: 0.6,
             ),
           ),
           Text(
             _dayTotalLabel(dayEntries),
             style: TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w700,
               color: Colors.grey[600],
             ),
           ),
@@ -1814,33 +2046,65 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   }
 
   /// The history list, grouped by date with a header per day, and its
-  /// overall header. Used as the right-hand panel on desktop, and as the
-  /// other toggle-able panel on mobile.
+  /// overall header. Swipe left to delete an entry. Used as the right-hand
+  /// panel on desktop, and as the other toggle-able panel on mobile.
   Widget _buildHistoryPanel(List<EntryWithId> completedEntries) {
     final groups = _groupEntriesByDate(completedEntries);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Text(
-            'History',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Row(
+            children: [
+              const Text(
+                'History',
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(width: 8),
+              if (completedEntries.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceMuted,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${completedEntries.length}',
+                    style: TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey[600]),
+                  ),
+                ),
+            ],
           ),
         ),
         Expanded(
           child: completedEntries.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No history yet',
-                    style: TextStyle(color: Colors.grey),
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceMuted,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.inbox_outlined, size: 30, color: Colors.grey[400]),
+                      ),
+                      const SizedBox(height: 12),
+                      Text('No history yet',
+                          style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      Text('Completed sessions will show up here',
+                          style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+                    ],
                   ),
                 )
               : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 16),
                   itemCount: groups.length,
                   itemBuilder: (context, groupIndex) {
                     final day = groups[groupIndex].key;
@@ -1873,7 +2137,9 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
           // is unnecessary (and hidden) there.
           if (!_isDesktop)
             IconButton(
-              icon: Icon(_showHistoryOnMobile ? Icons.timer : Icons.history),
+              icon: Icon(_showHistoryOnMobile
+                  ? Icons.timer_outlined
+                  : Icons.history_rounded),
               tooltip: _showHistoryOnMobile
                   ? 'Show current session'
                   : 'Show history',
@@ -1886,44 +2152,75 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
             onPressed: _addManualEntry,
             tooltip: 'Add manual entry',
           ),
-          IconButton(
-            icon: const Icon(Icons.calendar_month),
-            onPressed: _showMonthlyReport,
-            tooltip: 'Monthly report',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadEntries,
-            tooltip: 'Refresh',
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_forever),
-            onPressed: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Clear All Data'),
-                  content: const Text(
-                      'Are you sure you want to delete all entries? This cannot be undone.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
+          // Secondary, less-frequent actions live under an overflow menu so
+          // the AppBar doesn't turn into a row of five competing icons.
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            onSelected: (value) async {
+              switch (value) {
+                case 'report':
+                  await _showMonthlyReport();
+                  break;
+                case 'refresh':
+                  await _loadEntries();
+                  break;
+                case 'clear':
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20)),
+                      title: const Text('Clear All Data'),
+                      content: const Text(
+                          'Are you sure you want to delete all entries? This cannot be undone.'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Delete All'),
+                        ),
+                      ],
                     ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: TextButton.styleFrom(foregroundColor: Colors.red),
-                      child: const Text('Delete All'),
-                    ),
-                  ],
-                ),
-              );
-              if (confirm == true) {
-                await TimeDb.clearAll();
-                await _loadEntries();
+                  );
+                  if (confirm == true) {
+                    await TimeDb.clearAll();
+                    await _loadEntries();
+                  }
+                  break;
               }
             },
-            tooltip: 'Clear all data',
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'report',
+                child: ListTile(
+                  leading: Icon(Icons.calendar_month_outlined),
+                  title: Text('Monthly report'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'refresh',
+                child: ListTile(
+                  leading: Icon(Icons.refresh),
+                  title: Text('Refresh'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'clear',
+                child: const ListTile(
+                  leading: Icon(Icons.delete_forever_outlined, color: AppColors.danger),
+                  title: Text('Clear all data', style: TextStyle(color: AppColors.danger)),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1944,9 +2241,28 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                     ),
                   ],
                 )
-              : (_showHistoryOnMobile
-                  ? _buildHistoryPanel(completedEntries)
-                  : _buildSessionPanel()),
+              : AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: SlideTransition(
+                      position: Tween<Offset>(
+                        begin: const Offset(0, 0.02),
+                        end: Offset.zero,
+                      ).animate(animation),
+                      child: child,
+                    ),
+                  ),
+                  child: _showHistoryOnMobile
+                      ? KeyedSubtree(
+                          key: const ValueKey('history'),
+                          child: _buildHistoryPanel(completedEntries),
+                        )
+                      : KeyedSubtree(
+                          key: const ValueKey('session'),
+                          child: _buildSessionPanel(),
+                        ),
+                ),
     );
   }
 }
