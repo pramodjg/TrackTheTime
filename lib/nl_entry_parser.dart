@@ -46,6 +46,12 @@ class NaturalLanguageEntryParser {
     r'(?:for\s+)?(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b(?:\s+starting\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s?(?:am|pm)?))?',
   );
 
+  /// How long a single session is allowed to be before an AI-produced time
+  /// range is treated as implausible (likely hallucinated) rather than
+  /// trusted. Chosen generously above the app's own 10-hour "still checked
+  /// in?" watchdog so it doesn't reject genuine long sessions.
+  static const _maxPlausibleSessionSpan = Duration(hours: 20);
+
   static ParsedEntry parse(String input) {
     final warnings = <String>[];
     String text = ' ${input.trim().toLowerCase()} ';
@@ -138,34 +144,90 @@ class NaturalLanguageEntryParser {
     return DateTime(date.year, date.month, date.day, hour, minute);
   }
 
+  /// True when on-device Gemini Nano is installed and usable on this
+  /// device. Exposed so the UI can show/hide AI-related affordances (e.g.
+  /// grey out the auto-fill button, or show a "offline parsing only" hint)
+  /// without depending on GeminiNanoService directly.
+  static Future<bool> aiAvailable() => GeminiNanoService.isAvailable();
+
   /// Tries the fast offline regex parser first. Only reaches for on-device
   /// Gemini Nano (Android only, and only on supported devices) when the
   /// regex parser couldn't find a complete time range — e.g. messier
   /// phrasing like "worked most of the afternoon on the invoice bug".
-  /// Falls back to whatever the regex parser produced if AI is unavailable,
-  /// times out, or returns something unparseable — this call never throws.
+  ///
+  /// Validation added around the AI path:
+  ///   1. Device support is checked before attempting a call at all, so an
+  ///      unsupported device gets an immediate, clear warning instead of a
+  ///      silent failure or a multi-second timeout.
+  ///   2. Whatever Gemini Nano returns is sanity-checked (both timestamps
+  ///      present, checkout after checkin, span not absurdly long) before
+  ///      it's trusted — a hallucinated date is worse than no date, since
+  ///      it looks plausible enough that a user might not double-check it.
+  ///
+  /// Falls back to whatever the regex parser produced in every failure
+  /// case — this call never throws.
   static Future<ParsedEntry> parseWithAiFallback(String input) async {
     final regexResult = parse(input);
     if (regexResult.isComplete) return regexResult;
 
+    ParsedEntry withExtraWarning(String warning) => ParsedEntry(
+          checkIn: regexResult.checkIn,
+          checkOut: regexResult.checkOut,
+          isWorkSession: regexResult.isWorkSession,
+          notes: regexResult.notes,
+          warnings: [...regexResult.warnings, warning],
+        );
+
+    final aiAvailable = await GeminiNanoService.isAvailable();
+    if (!aiAvailable) {
+      return withExtraWarning(
+        "On-device AI isn't available on this device — fill in the "
+        "remaining fields manually.",
+      );
+    }
+
     final json = await GeminiNanoService.extractEntryJson(input);
-    if (json == null) return regexResult;
+    if (json == null) {
+      return withExtraWarning(
+        "On-device AI couldn't parse this — fill in the remaining fields "
+        "manually.",
+      );
+    }
 
     try {
+      final checkIn = json['checkInIso'] != null
+          ? DateTime.tryParse(json['checkInIso'] as String)
+          : null;
+      final checkOut = json['checkOutIso'] != null
+          ? DateTime.tryParse(json['checkOutIso'] as String)
+          : null;
+
+      final plausible = checkIn != null &&
+          checkOut != null &&
+          checkOut.isAfter(checkIn) &&
+          checkOut.difference(checkIn) <= _maxPlausibleSessionSpan;
+
+      if (!plausible) {
+        return withExtraWarning(
+          "On-device AI returned an implausible time range — fill in the "
+          "remaining fields manually.",
+        );
+      }
+
       return ParsedEntry(
-        checkIn:
-            json['checkInIso'] != null ? DateTime.parse(json['checkInIso']) : null,
-        checkOut: json['checkOutIso'] != null
-            ? DateTime.parse(json['checkOutIso'])
-            : null,
-        isWorkSession: json['isWorkSession'] ?? true,
-        notes: json['notes'],
+        checkIn: checkIn,
+        checkOut: checkOut,
+        isWorkSession: json['isWorkSession'] as bool? ?? true,
+        notes: json['notes'] as String?,
         warnings: const [
           'Parsed with on-device AI — please double-check the times.'
         ],
       );
     } catch (_) {
-      return regexResult;
+      return withExtraWarning(
+        "On-device AI response couldn't be read — fill in the remaining "
+        "fields manually.",
+      );
     }
   }
 }

@@ -10,7 +10,7 @@ import 'package:intl/intl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite/sqflite.dart' show databaseFactory;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-
+import 'package:trackthetime/graphical_analysis.dart';
 // Desktop-only plugins
 import 'package:launch_at_startup/launch_at_startup.dart';
 import 'package:local_notifier/local_notifier.dart';
@@ -22,6 +22,24 @@ import 'package:window_manager/window_manager.dart';
 /// widget context) can trigger the settings dialog inside the app.
 /// Only ever populated/invoked on desktop, since there's no tray on mobile.
 VoidCallback? onOpenSettingsRequested;
+SystemTray? _trayInstance;
+
+/// True only where system_tray actually supports tooltips — Windows and
+/// macOS. Linux/AppIndicator has no tooltip API, so this stays false there.
+bool get _trayTooltipSupported =>
+    !kIsWeb && (Platform.isWindows || Platform.isMacOS);
+
+/// Updates the tray icon's hover tooltip. No-op (and never throws) if
+/// tooltips aren't supported on this platform or the tray hasn't
+/// initialized yet.
+Future<void> updateTrayTooltip(String tooltip) async {
+  if (!_trayTooltipSupported || _trayInstance == null) return;
+  try {
+    await _trayInstance!.setToolTip(tooltip);
+  } catch (e) {
+    debugPrint('Failed to update tray tooltip: $e');
+  }
+}
 double _targetHours = 8.0;
 Set<int> _workingWeekdays = {1, 2, 3, 4, 5};
 
@@ -251,9 +269,14 @@ String getTrayIconPath(String fileName) {
 /// Sets up the persistent icon tray and its respective context menus.
 /// Desktop-only — never called on Android.
 Future<void> initSystemTray() async {
-  final SystemTray systemTray = SystemTray();
+ final SystemTray systemTray = SystemTray();
+  _trayInstance = systemTray;                 // NEW
   final Menu menu = Menu();
-
+ await systemTray.initSystemTray(
+    title: "Tray Utility",
+    iconPath: iconPath,
+    toolTip: "Time Tracker",                  // NEW
+  );
   final iconFile = Platform.isWindows ? 'app_icon.ico' : 'app_icon.png';
   final iconPath = path.join(
     path.dirname(Platform.resolvedExecutable),
@@ -414,6 +437,7 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
   List<EntryWithId> _entries = [];
   EntryWithId? _activeEntry;
   bool _isLoading = true;
+  bool? _aiAvailable;
   final TextEditingController _notesController = TextEditingController();
   Timer? _timer;
   Duration _elapsedTime = Duration.zero;
@@ -431,11 +455,13 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
 
   @override
   void initState() {
-    super.initState();
-    _loadEntries();
-    _startTimer();
-    _loadTargetHours();
-    onOpenSettingsRequested = _showTargetSettingsDialog;
+ super.initState();
+  _loadEntries();
+  _startTimer();
+  _loadTargetHours();
+  onOpenSettingsRequested = _showTargetSettingsDialog;
+  NaturalLanguageEntryParser.aiAvailable()
+      .then((v) => setState(() => _aiAvailable = v));
   }
 
   @override
@@ -1052,6 +1078,19 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                       enabled: !isParsing,
                       onSubmitted: (_) => runParse(),
                     ),
+                    if (_aiAvailable == false) ...[
+  const SizedBox(height: 6),
+  Row(children: [
+    Icon(Icons.info_outline, size: 14, color: Colors.grey[500]),
+    const SizedBox(width: 4),
+    Expanded(
+      child: Text(
+        'On-device AI isn\'t available on this device — offline parsing only.',
+        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+      ),
+    ),
+  ]),
+],
                     if (parseWarning != null) ...[
                       const SizedBox(height: 6),
                       Row(
@@ -2162,6 +2201,13 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                 case 'report':
                   await _showMonthlyReport();
                   break;
+                  case 'analysis':
+  await showGraphicalAnalysisDialog(
+    context,
+    entries: _entries,
+    targetHours: _targetHours,
+  );
+  break;
                 case 'refresh':
                   await _loadEntries();
                   break;
@@ -2203,6 +2249,14 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
+              const PopupMenuItem(
+  value: 'analysis',
+  child: ListTile(
+    leading: Icon(Icons.bar_chart_rounded),
+    title: Text('Graphical analysis'),
+    contentPadding: EdgeInsets.zero,
+  ),
+),
               const PopupMenuItem(
                 value: 'refresh',
                 child: ListTile(
