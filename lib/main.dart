@@ -271,13 +271,7 @@ String getTrayIconPath(String fileName) {
 Future<void> initSystemTray() async {
  final SystemTray systemTray = SystemTray();
   _trayInstance = systemTray;                 // NEW
-  final Menu menu = Menu();
- await systemTray.initSystemTray(
-    title: "Tray Utility",
-    iconPath: iconPath,
-    toolTip: "Time Tracker",                  // NEW
-  );
-  final iconFile = Platform.isWindows ? 'app_icon.ico' : 'app_icon.png';
+   final iconFile = Platform.isWindows ? 'appicon.ico' : 'appicon.png';
   final iconPath = path.join(
     path.dirname(Platform.resolvedExecutable),
     'data',
@@ -289,33 +283,25 @@ Future<void> initSystemTray() async {
   debugPrint('Resolved icon path: $iconPath');
   debugPrint('File exists: ${File(iconPath).existsSync()}');
 
+
+
+  final menu = Menu();
   await systemTray.initSystemTray(
-    title: "Tray Utility",
+    title: 'Tray Utility',
     iconPath: iconPath,
+    toolTip: 'Time Tracker',
   );
 
   await menu.buildFrom([
-    MenuItemLabel(
-      label: 'Open Dashboard',
-      onClicked: (menuItem) => windowManager.show(),
-    ),
-    MenuItemLabel(
-      label: 'Set Daily Target',
-      onClicked: (menuItem) async {
-        await windowManager.show();
-        await windowManager.focus();
-        onOpenSettingsRequested?.call();
-      },
-    ),
-    MenuItemLabel(
-      label: 'Minimize to Tray',
-      onClicked: (menuItem) => windowManager.hide(),
-    ),
+    MenuItemLabel(label: 'Open Dashboard', onClicked: (menuItem) => windowManager.show()),
+    MenuItemLabel(label: 'Set Daily Target', onClicked: (menuItem) async {
+      await windowManager.show();
+      await windowManager.focus();
+      onOpenSettingsRequested?.call();
+    }),
+    MenuItemLabel(label: 'Minimize to Tray', onClicked: (menuItem) => windowManager.hide()),
     MenuSeparator(),
-    MenuItemLabel(
-      label: 'Close Completely',
-      onClicked: (menuItem) => windowManager.destroy(),
-    ),
+    MenuItemLabel(label: 'Close Completely', onClicked: (menuItem) => windowManager.destroy()),
   ]);
 
   await systemTray.setContextMenu(menu);
@@ -1019,240 +1005,296 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
     });
   }
 
-  Future<void> _addManualEntry() async {
-    bool isWorkSession = true;
-    DateTime checkIn = DateTime.now().subtract(const Duration(hours: 1));
-    DateTime checkOut = DateTime.now();
-    final notesController = TextEditingController();
-    final descriptionController = TextEditingController();
-    String? errorText;
-    String? parseWarning;
-    bool isParsing = false;
+ Future<void> _addManualEntry() async {
+  bool isWorkSession = true;
+  DateTime selectedDate = DateTime.now();
+  DateTime checkIn = DateTime.now().subtract(const Duration(hours: 1));
+  DateTime checkOut = DateTime.now();
+  final notesController = TextEditingController();
+  final descriptionController = TextEditingController();
+  String? errorText;
+  String? parseWarning;
+  bool isParsing = false;
 
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> runParse() => _applyNlParse(
-                  descriptionController: descriptionController,
-                  notesController: notesController,
-                  setDialogState: setDialogState,
-                  setCheckIn: (v) => checkIn = v,
-                  setCheckOut: (v) => checkOut = v,
-                  setIsWorkSession: (v) => isWorkSession = v,
-                  setParseWarning: (v) => parseWarning = v,
-                  setIsParsing: (v) => isParsing = v,
-                );
-
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              title: const Text('Add Manual Entry'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextField(
-                      controller: descriptionController,
-                      decoration: InputDecoration(
-                        labelText: 'Describe it (optional)',
-                        hintText:
-                            'e.g. "worked 2 to 4:30 on the billing module"',
-                        suffixIcon: isParsing
-                            ? const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                              )
-                            : IconButton(
-                                icon: const Icon(Icons.auto_awesome),
-                                tooltip: 'Auto-fill from description',
-                                onPressed: runParse,
-                              ),
-                      ),
-                      enabled: !isParsing,
-                      onSubmitted: (_) => runParse(),
-                    ),
-                    if (_aiAvailable == false) ...[
-  const SizedBox(height: 6),
-  Row(children: [
-    Icon(Icons.info_outline, size: 14, color: Colors.grey[500]),
-    const SizedBox(width: 4),
-    Expanded(
-      child: Text(
-        'On-device AI isn\'t available on this device — offline parsing only.',
-        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-      ),
-    ),
-  ]),
-],
-                    if (parseWarning != null) ...[
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Icon(
-                            parseWarning!.contains('AI')
-                                ? Icons.auto_awesome
-                                : Icons.info_outline,
-                            size: 14,
-                            color: AppColors.warning,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              parseWarning!,
-                              style: const TextStyle(
-                                  fontSize: 12, color: AppColors.warning),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 14),
-                    SegmentedButton<bool>(
-                      style: SegmentedButton.styleFrom(
-                        selectedBackgroundColor: AppColors.workSurface,
-                        selectedForegroundColor: AppColors.workDark,
-                      ),
-                      segments: const [
-                        ButtonSegment(
-                          value: true,
-                          label: Text('Work'),
-                          icon: Icon(Icons.work_outline),
-                        ),
-                        ButtonSegment(
-                          value: false,
-                          label: Text('Break'),
-                          icon: Icon(Icons.coffee_outlined),
-                        ),
-                      ],
-                      selected: {isWorkSession},
-                      onSelectionChanged: (selection) {
-                        setDialogState(() => isWorkSession = selection.first);
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.login),
-                      title: const Text('Check In'),
-                      subtitle: Text(_formatDateTime(checkIn)),
-                      trailing: const Icon(Icons.edit_calendar, size: 20),
-                      onTap: () async {
-                        final picked = await _pickDateTime(context, checkIn);
-                        if (picked != null) {
-                          setDialogState(() {
-                            checkIn = picked;
-                            errorText = null;
-                          });
-                        }
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.logout),
-                      title: const Text('Check Out'),
-                      subtitle: Text(_formatDateTime(checkOut)),
-                      trailing: const Icon(Icons.edit_calendar, size: 20),
-                      onTap: () async {
-                        final picked = await _pickDateTime(context, checkOut);
-                        if (picked != null) {
-                          setDialogState(() {
-                            checkOut = picked;
-                            errorText = null;
-                          });
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: notesController,
-                      decoration: const InputDecoration(
-                        labelText: 'Notes (optional)',
-                        isDense: true,
-                      ),
-                      maxLines: 2,
-                    ),
-                    if (errorText != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        errorText!,
-                        style: const TextStyle(color: AppColors.danger, fontSize: 13),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    if (!checkOut.isAfter(checkIn)) {
-                      setDialogState(() {
-                        errorText = 'Check out must be after check in';
-                      });
-                      return;
-                    }
-
-                    final overlaps = _entries.any((e) {
-                      final existingOut = e.entry.checkOut ?? DateTime.now();
-                      return checkIn.isBefore(existingOut) &&
-                          checkOut.isAfter(e.entry.checkIn);
-                    });
-
-                    if (overlaps) {
-                      setDialogState(() {
-                        errorText = 'This overlaps with an existing entry';
-                      });
-                      return;
-                    }
-
-                    final entry = TimeEntry(
-                      checkIn: checkIn,
-                      isWorkSession: isWorkSession,
-                    );
-                    entry.checkOut = checkOut;
-                    entry.notes =
-                        notesController.text.isEmpty ? null : notesController.text;
-
-                    await TimeDb.insertEntry(entry);
-                    if (context.mounted) Navigator.pop(context);
-                    await _loadEntries();
-
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: const Text('Manual entry added'),
-                          backgroundColor: AppColors.success,
-                          behavior: SnackBarBehavior.floating,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10)),
-                        ),
-                      );
-                    }
-                  },
-                  child: const Text('Add'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    notesController.dispose();
-    descriptionController.dispose();
+  DateTime combine(DateTime date, TimeOfDay time) {
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
-  String _formatDuration(Duration duration) {
+  Future<void> pickDate(StateSetter setDialogState) async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: selectedDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now(),
+    );
+    if (date == null) return;
+
+    setDialogState(() {
+      selectedDate = date;
+      checkIn = combine(selectedDate, TimeOfDay.fromDateTime(checkIn));
+      checkOut = combine(selectedDate, TimeOfDay.fromDateTime(checkOut));
+      errorText = null;
+    });
+  }
+
+  Future<void> pickCheckInTime(StateSetter setDialogState) async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(checkIn),
+    );
+    if (time == null) return;
+
+    setDialogState(() {
+      checkIn = combine(selectedDate, time);
+      errorText = null;
+    });
+  }
+
+  Future<void> pickCheckOutTime(StateSetter setDialogState) async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(checkOut),
+    );
+    if (time == null) return;
+
+    setDialogState(() {
+      checkOut = combine(selectedDate, time);
+      errorText = null;
+    });
+  }
+
+  await showDialog(
+    context: context,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          Future<void> runParse() => _applyNlParse(
+                descriptionController: descriptionController,
+                notesController: notesController,
+                setDialogState: setDialogState,
+                setCheckIn: (v) {
+                  setDialogState(() {
+                    checkIn = v;
+                    selectedDate = DateTime(v.year, v.month, v.day);
+                  });
+                },
+                setCheckOut: (v) {
+                  setDialogState(() {
+                    checkOut = v;
+                    selectedDate = DateTime(v.year, v.month, v.day);
+                  });
+                },
+                setIsWorkSession: (v) => isWorkSession = v,
+                setParseWarning: (v) => parseWarning = v,
+                setIsParsing: (v) => isParsing = v,
+              );
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: const Text('Add Manual Entry'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: descriptionController,
+                    decoration: InputDecoration(
+                      labelText: 'Describe it (optional)',
+                      hintText: 'e.g. "worked 2 to 4:30 on the billing module"',
+                      suffixIcon: isParsing
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : IconButton(
+                              icon: const Icon(Icons.auto_awesome),
+                              tooltip: 'Auto-fill from description',
+                              onPressed: runParse,
+                            ),
+                    ),
+                    enabled: !isParsing,
+                    onSubmitted: (_) => runParse(),
+                  ),
+                  if (_aiAvailable == false) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 14, color: Colors.grey[500]),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'On-device AI isn’t available on this device — offline parsing only.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (parseWarning != null) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(
+                          parseWarning!.contains('AI')
+                              ? Icons.auto_awesome
+                              : Icons.info_outline,
+                          size: 14,
+                          color: AppColors.warning,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            parseWarning!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: AppColors.warning,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  SegmentedButton<bool>(
+                    style: SegmentedButton.styleFrom(
+                      selectedBackgroundColor: AppColors.workSurface,
+                      selectedForegroundColor: AppColors.workDark,
+                    ),
+                    segments: const [
+                      ButtonSegment(
+                        value: true,
+                        label: Text('Work'),
+                        icon: Icon(Icons.work_outline),
+                      ),
+                      ButtonSegment(
+                        value: false,
+                        label: Text('Break'),
+                        icon: Icon(Icons.coffee_outlined),
+                      ),
+                    ],
+                    selected: {isWorkSession},
+                    onSelectionChanged: (selection) {
+                      setDialogState(() => isWorkSession = selection.first);
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.calendar_today),
+                    title: const Text('Date'),
+                    subtitle: Text(DateFormat('EEE, MMM d, yyyy').format(selectedDate)),
+                    trailing: const Icon(Icons.edit_calendar, size: 20),
+                    onTap: () => pickDate(setDialogState),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.login),
+                    title: const Text('Check In'),
+                    subtitle: Text(_formatDateTime(checkIn)),
+                    trailing: const Icon(Icons.edit_calendar, size: 20),
+                    onTap: () => pickCheckInTime(setDialogState),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.logout),
+                    title: const Text('Check Out'),
+                    subtitle: Text(_formatDateTime(checkOut)),
+                    trailing: const Icon(Icons.edit_calendar, size: 20),
+                    onTap: () => pickCheckOutTime(setDialogState),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: notesController,
+                    decoration: const InputDecoration(
+                      labelText: 'Notes (optional)',
+                      isDense: true,
+                    ),
+                    maxLines: 2,
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(
+                        color: AppColors.danger,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  if (!checkOut.isAfter(checkIn)) {
+                    setDialogState(() {
+                      errorText = 'Check out must be after check in';
+                    });
+                    return;
+                  }
+
+                  final overlaps = _entries.any((e) {
+                    final existingOut = e.entry.checkOut ?? DateTime.now();
+                    return checkIn.isBefore(existingOut) &&
+                        checkOut.isAfter(e.entry.checkIn);
+                  });
+
+                  if (overlaps) {
+                    setDialogState(() {
+                      errorText = 'This overlaps with an existing entry';
+                    });
+                    return;
+                  }
+
+                  final entry = TimeEntry(
+                    checkIn: checkIn,
+                    isWorkSession: isWorkSession,
+                  );
+                  entry.checkOut = checkOut;
+                  entry.notes = notesController.text.isEmpty ? null : notesController.text;
+
+                  await TimeDb.insertEntry(entry);
+                  if (context.mounted) Navigator.pop(context);
+                  await _loadEntries();
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: const Text('Manual entry added'),
+                        backgroundColor: AppColors.success,
+                        behavior: SnackBarBehavior.floating,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    );
+                  }
+                },
+                child: const Text('Add'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  notesController.dispose();
+  descriptionController.dispose();
+}
+String _formatDuration(Duration duration) {
     final hours = duration.inHours;
     final minutes = duration.inMinutes.remainder(60);
     final seconds = duration.inSeconds.remainder(60);
@@ -2043,11 +2085,29 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
                       ),
                   ],
                 ),
-                trailing: IconButton(
-                  icon: Icon(Icons.edit_outlined, color: Colors.grey[500], size: 20),
-                  onPressed: () => _editEntry(entryWithId),
-                  tooltip: 'Edit notes',
-                ),
+                trailing:  Row(
+  mainAxisSize: MainAxisSize.min,
+  children: [
+    IconButton(
+      icon: const Icon(Icons.edit_outlined),
+      color: Colors.grey,
+      tooltip: 'Edit notes',
+      onPressed: () => _editEntry(entryWithId),
+    ),
+    IconButton(
+      icon: const Icon(Icons.delete_outline),
+      color: AppColors.danger,
+      tooltip: 'Delete entry',
+      onPressed: () async {
+        final confirm = await _confirmDeleteEntry();
+        if (confirm) {
+          await TimeDb.deleteEntry(entryWithId.id);
+          await _loadEntries();
+        }
+      },
+    ),
+  ],
+),
               ),
             ),
           ],
@@ -2055,7 +2115,12 @@ class _TimeTrackerHomeState extends State<TimeTrackerHome> {
       ),
     );
   }
-
+Future<void> deleteEntryById(int id) async {
+  final confirm = await _confirmDeleteEntry();
+  if (!confirm) return;
+  await TimeDb.deleteEntry(id);
+  await _loadEntries();
+}
   Widget _buildDateHeader(DateTime day, List<EntryWithId> dayEntries) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
